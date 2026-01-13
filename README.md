@@ -31,6 +31,21 @@ inspired by modern HATEOAS patterns. The server emits attributes. The browser
 runtime observes them and activates behavior. No hand-written event listeners,
 no duplicated logic, no fragile conventions.
 
+## Working natively with AI
+
+The `ai-context.ts` script is a small, deterministic utility that emits a fresh
+AI-ready context for the project to STDOUT. It is intended to be run on demand,
+typically via a Deno task, to generate a concise but complete prompt that an AI
+assistant can use as ground truth for reasoning about the codebase. The script
+starts with a brief, stable description of the project and then appends the full
+contents of a curated list of relevant files, in a fixed order, with normalized
+line endings to ensure reproducible output. Because the output is written to
+STDOUT, it can be redirected to a file or piped directly into other tools. In
+practice, you add or remove paths in the `FILES` array to control what the AI
+sees, then run `deno run -A ai-context.ts` (optionally with `--root` or
+`--no-hash`) whenever you want to regenerate an up-to-date AI context that
+accurately reflects the current state of the project.
+
 ## Directory structure
 
 The repository is split explicitly by environment and responsibility.
