@@ -6,16 +6,21 @@
   "exports": {
     "./html/shared": "./lib/html/shared.ts",
     "./html/server/fluent": "./lib/html/server/fluent.ts",
-    "./html/browser-ua/fluent": "./lib/html/browser-ua/fluent.ts"
+    "./html/browser-ua/fluent": "./lib/html/browser-ua/fluent.ts",
+    "./html/browser-ua/ce/base": "./lib/html/browser-ua/custom-element/base.ts",
+    "./html/browser-ua/runtime": "./lib/html/browser-ua/runtime.ts"
   },
 
   "imports": {
+    "@std/path": "jsr:@std/path@1",
     "@std/assert": "jsr:@std/assert@1"
   },
 
   "lint": {
     "exclude": [
-      "lib/html/browser-ua/fluent-browser-ua.auto.js"
+      "lib/html/browser-ua/fluent-browser-ua.auto.js",
+      "lib/html/browser-ua/runtime.auto.js",
+      "lib/html/browser-ua/custom-element/base.auto.js"
     ],
     "rules": {
       "exclude": ["no-slow-types"]
@@ -27,6 +32,9 @@
     "fmt": "deno fmt",
     "lint": "deno lint",
     "test": "deno test -A",
-    "bundle:client": "deno bundle src/html/browser-ua/fluent.ts -o lib/html/browser-ua/fluent-browser-ua.auto.js"
+    "bundle:fluent-tags": "deno bundle src/html/browser-ua/fluent.ts -o lib/html/browser-ua/fluent-browser-ua.auto.js",
+    "bundle:runtime": "deno bundle src/html/browser-ua/runtime.ts -o lib/html/browser-ua/runtime.auto.js",
+    "bundle:ce-base": "deno bundle src/html/browser-ua/custom-element/base.ts -o lib/html/browser-ua/custom-element/base.auto.js",
+    "bundle:client": "deno task bundle:fluent-tags && deno task bundle:runtime && deno task bundle:ce-base"
   }
 }
