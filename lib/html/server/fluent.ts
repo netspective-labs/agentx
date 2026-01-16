@@ -10,33 +10,42 @@
 
 import {
   type Attrs,
-  type AttrValue,
   type Child,
+  type ChildAdder,
+  type ChildSpec,
   escapeHtml,
   flattenChildren,
   raw,
   type RawHtml,
+  serializeAttrs,
 } from "../shared.ts";
 
 export { raw };
 
-// Minimal explicit type to satisfy "public API must have explicit type"
-// while keeping inference for the implementation.
 export type TagFn = (
-  attrsOrChild?: Attrs | Child,
-  ...children: Child[]
+  attrsOrChild?: Attrs | ChildSpec,
+  ...children: ChildSpec[]
 ) => RawHtml;
 
-// Internal primitive, intentionally not exported.
 const el = (tag: string, ...args: unknown[]) => {
   let attrs: Attrs | undefined;
-  let children: Child[];
+  let specs: ChildSpec[];
 
   if (args.length > 0 && isAttrs(args[0])) {
     attrs = args[0] as Attrs;
-    children = args.slice(1) as Child[];
+    specs = args.slice(1) as ChildSpec[];
   } else {
-    children = args as Child[];
+    specs = args as ChildSpec[];
+  }
+
+  const children: Child[] = [];
+  const add: ChildAdder = (...c) => {
+    for (const x of c) children.push(x);
+  };
+
+  for (const s of specs) {
+    if (typeof s === "function") (s as (e: ChildAdder) => void)(add);
+    else children.push(s as Child);
   }
 
   const attrText = serializeAttrs(attrs);
@@ -59,24 +68,9 @@ const isAttrs = (v: unknown): v is Attrs => {
   if (v == null) return false;
   if (Array.isArray(v)) return false;
   if (typeof v !== "object") return false;
+  if (typeof v === "function") return false;
   if ("__rawHtml" in (v as Record<string, unknown>)) return false;
   return true;
-};
-
-const serializeAttrs = (attrs?: Attrs) => {
-  if (!attrs) return "";
-  const keys = Object.keys(attrs).sort();
-  let s = "";
-  for (const k of keys) {
-    const v = (attrs as Record<string, AttrValue>)[k];
-    if (v == null || v === false) continue;
-    if (v === true) {
-      s += ` ${k}`;
-      continue;
-    }
-    s += ` ${k}="${escapeHtml(String(v))}"`;
-  }
-  return s;
 };
 
 const VOID_ELEMENTS = new Set([

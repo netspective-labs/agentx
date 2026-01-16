@@ -79,10 +79,9 @@ attributes and activates behavior.
 `src/html/browser-ua/fluent.ts` is the source version of the browser fluent
 implementation. This file is not served directly. It exists to be bundled.
 
-`lib/html/browser-ua/fluent-browser-ua.auto.js` is the bundled ("auto"),
-browser-ready output generated via `deno bundle`. This file is what you actually
-serve to browsers. It contains no TypeScript, no imports, and no build-time
-dependencies.
+`lib/html/browser-ua/fluent.auto.js` is the bundled ("auto"), browser-ready
+output generated via `deno bundle`. This file is what you actually serve to
+browsers. It contains no TypeScript, no imports, and no build-time dependencies.
 
 `lib/html/browser-ua/fluent_test.html` is the browser test harness. It loads
 PicoCSS from a CDN, loads the bundled browser fluent runtime, exercises tag
@@ -134,7 +133,7 @@ Example HTML:
 <!DOCTYPE html>
 <html>
   <head>
-    <script type="module" src="./fluent-browser-ua.auto.js"></script>
+    <script type="module" src="./fluent.auto.js"></script>
   </head>
   <body>
     <button data-on:click="@get(&quot;/ping&quot;)">Ping</button>
@@ -152,7 +151,7 @@ What happens at runtime:
 If you use the browser fluent API directly, it looks like this:
 
 ```js
-import { button, JunxionUX, mount } from "./fluent-browser-ua.auto.js";
+import { button, JunxionUX, mount } from "./fluent.auto.js";
 
 const node = button(
   { ...JunxionUX.clickGet("/ping") },

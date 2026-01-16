@@ -10,6 +10,12 @@ export type AttrValue =
 
 export type Attrs = Record<string, AttrValue>;
 
+export type RawHtml = { readonly __rawHtml: string };
+
+export function raw(html: string): RawHtml {
+  return { __rawHtml: html };
+}
+
 export type Child =
   | string
   | number
@@ -19,11 +25,12 @@ export type Child =
   | RawHtml
   | Child[];
 
-export type RawHtml = { readonly __rawHtml: string };
+// New: imperative child builder support (not part of flattenChildren input)
+export type ChildAdder = (...children: Child[]) => void;
+export type ChildBuilder = (e: ChildAdder) => void;
 
-export function raw(html: string): RawHtml {
-  return { __rawHtml: html };
-}
+// New: what tag functions accept as “children”
+export type ChildSpec = Child | ChildBuilder;
 
 export function escapeHtml(value: string): string {
   return value
@@ -62,7 +69,7 @@ export function flattenChildren(
 export function serializeAttrs(attrs?: Attrs): string {
   if (!attrs) return "";
 
-  const keys = Object.keys(attrs).sort(); // deterministic output for tests
+  const keys = Object.keys(attrs).sort();
   let s = "";
   for (const k of keys) {
     const v = attrs[k];

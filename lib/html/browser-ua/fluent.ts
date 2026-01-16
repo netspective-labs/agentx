@@ -1,1 +1,1 @@
-export * from "./fluent-browser-ua.auto.js";
+export * from "./fluent.auto.js";

@@ -18,7 +18,7 @@
 
   "lint": {
     "exclude": [
-      "lib/html/browser-ua/fluent-browser-ua.auto.js",
+      "lib/html/browser-ua/fluent.auto.js",
       "lib/html/browser-ua/runtime.auto.js",
       "lib/html/browser-ua/custom-element/base.auto.js"
     ],
@@ -32,7 +32,7 @@
     "fmt": "deno fmt",
     "lint": "deno lint",
     "test": "deno test -A",
-    "bundle:fluent-tags": "deno bundle src/html/browser-ua/fluent.ts -o lib/html/browser-ua/fluent-browser-ua.auto.js",
+    "bundle:fluent-tags": "deno bundle src/html/browser-ua/fluent.ts -o lib/html/browser-ua/fluent.auto.js",
     "bundle:runtime": "deno bundle src/html/browser-ua/runtime.ts -o lib/html/browser-ua/runtime.auto.js",
     "bundle:ce-base": "deno bundle src/html/browser-ua/custom-element/base.ts -o lib/html/browser-ua/custom-element/base.auto.js",
     "bundle:client": "deno task bundle:fluent-tags && deno task bundle:runtime && deno task bundle:ce-base"

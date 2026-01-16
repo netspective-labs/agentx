@@ -10,7 +10,7 @@
 // - raw() opt-in for HTML injection
 // - AUTO-DISCOVERY: if DataStar-style data-* attrs exist, we auto-load the upstream runtime
 //
-// Bundled to: lib/html/browser-ua/fluent-browser-ua.auto.js
+// Bundled to: lib/html/browser-ua/fluent.auto.js
 //
 // Note: we intentionally avoid using the upstream project name in identifiers/exports.
 
@@ -18,22 +18,23 @@ import {
   type Attrs,
   type AttrValue,
   type Child,
+  type ChildAdder,
+  type ChildSpec,
   flattenChildren,
   raw,
 } from "../../../lib/html/shared.ts";
 
 export { raw };
 
-// Internal primitive (not exported).
 const el = (tagName: string, ...args: unknown[]) => {
   let attrs: Attrs | undefined;
-  let children: Child[];
+  let specs: ChildSpec[];
 
   if (args.length > 0 && isAttrs(args[0])) {
     attrs = args[0] as Attrs;
-    children = args.slice(1) as Child[];
+    specs = args.slice(1) as ChildSpec[];
   } else {
-    children = args as Child[];
+    specs = args as ChildSpec[];
   }
 
   const node = document.createElement(tagName);
@@ -51,6 +52,16 @@ const el = (tagName: string, ...args: unknown[]) => {
     }
   }
 
+  const children: Child[] = [];
+  const add: ChildAdder = (...c) => {
+    for (const x of c) children.push(x);
+  };
+
+  for (const s of specs) {
+    if (typeof s === "function") (s as (e: ChildAdder) => void)(add);
+    else children.push(s as Child);
+  }
+
   for (const c of flattenChildren(children)) {
     if (typeof c === "string") {
       node.appendChild(document.createTextNode(c));
@@ -64,18 +75,17 @@ const el = (tagName: string, ...args: unknown[]) => {
   return node;
 };
 
-// Typed tag factory for tags present in HTMLElementTagNameMap
 const tag =
   <K extends keyof HTMLElementTagNameMap>(name: K) => (...args: unknown[]) =>
     el(name, ...(args as never[])) as HTMLElementTagNameMap[K];
 
-// Fallback tag factory for tags not in HTMLElementTagNameMap in some DOM libs
 const legacyTag = (name: string) => (...args: unknown[]) =>
   el(name, ...(args as never[])) as HTMLElement;
 
 const isAttrs = (v: unknown): v is Attrs => {
   if (v == null) return false;
   if (Array.isArray(v)) return false;
+  if (typeof v === "function") return false;
   if (typeof v !== "object") return false;
   if ("__rawHtml" in (v as Record<string, unknown>)) return false;
   return true;
