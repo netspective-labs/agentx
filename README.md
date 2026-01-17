@@ -1,230 +1,206 @@
-# Junxion UX
+# Junxion UX: an AI-first, hypermedia-native UX library
 
-Integrating client and server Web UIs using modern Web Components for
-lightweight Web UIs.
+Junxion UX is a small, composable UX library designed for modern server-centric
+web applications that must remain understandable, testable, and maintainable as
+complexity grows. It is not a framework. It is a set of tightly scoped libraries
+that work together to support progressive enhancement, typed hypermedia
+interactions, and AI-first maintenance.
 
-This project provides a strongly typed, SQL-friendly, junior-safe fluent HTML
-system for Deno that works across server and browser environments, with
-automatic hypermedia integration using JunxionUX semantics. It is designed for
-teams that want to generate HTML deterministically on the server, enhance it
-progressively in the browser, and avoid ad-hoc DOM manipulation or string
-templating.
+At a high level, Junxion UX brings together four ideas:
 
-The core idea is simple: the same fluent mental model applies everywhere, but
-the implementation is environment-specific and intentionally constrained so that
-developers cannot “do the wrong thing.”
+- Server-first HTML as the default UX substrate
+- Typed hypermedia interactions instead of opaque client frameworks
+- Progressive client complexity, added only when needed
+- A codebase structured so AI systems can safely maintain it end to end
 
-⚠️ Test cases use bundled JS while the e2e test uses on-demand bundling. This
-allows us to test both ways.
+## Quick Start
 
 To test:
 
 ```bash
-$ deno task bundle:client                # used by unit tests, not needed by counter/server.ts
+# first time in your workspace
+$ deno task test:install-deps            # playwright, et. al.
+
+# every time you change code
 $ deno task test                         # runs Deno unit tests
-$ ./support/assurance/counter/server.ts  # e2e test
 ```
 
-TODO:
-
-- [ ] Add bundling of `lib/html/hypermedia.ts`
-- [ ] Add deno task git-pre-commit to do "local CI/CD"
-
-## Purpose and design goals
-
-On the server side, the library generates HTML strings safely and
-deterministically. Text is escaped by default, raw HTML requires explicit
-opt-in, attributes are ordered deterministically, and every HTML tag is exposed
-as a named function. There is no generic `el()` exported, so junior developers
-are guided into correct usage automatically.
-
-On the browser side, the library creates real DOM nodes using the same fluent
-API shape. It adds automatic discovery of JunxionUX `data-*` attributes so that
-interactive behavior can be wired up without manual JavaScript glue code.
-
-Between the two, JunxionUX provides a small, opinionated hypermedia vocabulary
-inspired by modern HATEOAS patterns. The server emits attributes. The browser
-runtime observes them and activates behavior. No hand-written event listeners,
-no duplicated logic, no fragile conventions.
-
-## Working natively with AI
-
-The `ai-context.ts` script is a small, deterministic utility that emits a fresh
-AI-ready context for the project to STDOUT. It is intended to be run on demand,
-typically via a Deno task, to generate a concise but complete prompt that an AI
-assistant can use as ground truth for reasoning about the codebase. The script
-starts with a brief, stable description of the project and then appends the full
-contents of a curated list of relevant files, in a fixed order, with normalized
-line endings to ensure reproducible output. Because the output is written to
-STDOUT, it can be redirected to a file or piped directly into other tools. In
-practice, you add or remove paths in the `FILES` array to control what the AI
-sees, then run `deno run -A ai-context.ts` (optionally with `--root` or
-`--no-hash`) whenever you want to regenerate an up-to-date AI context that
-accurately reflects the current state of the project.
-
-## Directory structure
-
-The repository is split explicitly by environment and responsibility.
-
-`lib/html/shared.ts` file contains shared types and utilities used by both
-server and browser implementations. It defines things like attribute types,
-child flattening, HTML escaping, and the `raw()` opt-in escape hatch. Nothing in
-here depends on DOM or server APIs.
-
-`lib/html/server/fluent.ts` is the server-side fluent HTML builder. It produces
-HTML strings. All HTML tags are exported as named functions. Hypermedia helpers
-live here as `JunxionUX`, which emits `data-*` attributes but never executes
-behavior. This file is safe to use in HTTP handlers, background jobs, static
-site generation, or tests.
-
-`lib/html/server/fluent_test.ts` are pure unit tests for server-side HTML
-generation. These validate escaping, attribute ordering, void elements, raw HTML
-behavior, and JunxionUX attribute emission. No server is started here.
-
-`lib/html/server/fluent-integration_test.ts` are lightweight integration tests
-that spin up an ephemeral `Deno.serve()` instance inside the test process. These
-tests verify that real HTTP responses contain the expected hypermedia attributes
-and that SSE responses behave correctly. There is no external server to run.
-
-`lib/html/browser-ua/fluent.ts` is the browser-side ("browser user agent")
-fluent implementation, written in TypeScript and using DOM APIs. This mirrors
-the server API shape but returns `HTMLElement` instances instead of strings. It
-also includes the JunxionUX runtime logic that auto-discovers `data-*`
-attributes and activates behavior.
-
-`src/html/browser-ua/fluent.ts` is the source version of the browser fluent
-implementation. This file is not served directly. It exists to be bundled.
-
-`lib/html/browser-ua/fluent.auto.js` is the bundled ("auto"), browser-ready
-output generated via `deno bundle`. This file is what you actually serve to
-browsers. It contains no TypeScript, no imports, and no build-time dependencies.
-
-`lib/html/browser-ua/fluent_test.html` is the browser test harness. It loads
-PicoCSS from a CDN, loads the bundled browser fluent runtime, exercises tag
-creation and integration behavior, and reports results directly in the DOM. No
-third-party test frameworks are used.
-
-## How server-side usage works
-
-On the server, you import the fluent builder and generate HTML as data, not as
-templates.
-
-Example:
-
-```ts
-import * as H from "@netspective-labs/junxion-ux/html/server/fluent";
-
-const page = H.doctype() +
-  H.html(
-    H.head(
-      H.title("Example"),
-    ),
-    H.body(
-      H.button(
-        { ...H.JunxionUX.clickGet("/ping") },
-        "Ping",
-      ),
-    ),
-  );
-
-return new Response(page, {
-  headers: { "content-type": "text/html; charset=utf-8" },
-});
-```
-
-Important properties of this approach:
-
-- All HTML is generated by functions, not string concatenation
-- Text is escaped by default
-- Interactive behavior is described declaratively using attributes
-- No JavaScript logic is embedded in HTML
-
-## How browser-side usage works
-
-In the browser, you serve the bundled runtime and let it enhance the DOM.
-
-Example HTML:
-
-```html
-<!DOCTYPE html>
-<html>
-  <head>
-    <script type="module" src="./fluent.auto.js"></script>
-  </head>
-  <body>
-    <button data-on:click="@get(&quot;/ping&quot;)">Ping</button>
-  </body>
-</html>
-```
-
-What happens at runtime:
-
-- The JunxionUX runtime scans the DOM
-- It discovers `data-on:*` attributes
-- It automatically wires the appropriate behavior
-- No manual event listeners are required
-
-If you use the browser fluent API directly, it looks like this:
-
-```js
-import { button, JunxionUX, mount } from "./fluent.auto.js";
-
-const node = button(
-  { ...JunxionUX.clickGet("/ping") },
-  "Ping",
-);
-
-mount(document.body, node);
-```
-
-## How server and browser integrate
-
-The server never knows about the browser runtime, and the browser never imports
-server code.
-
-Integration happens purely through HTML and attributes:
-
-- The server emits `data-*` attributes using JunxionUX helpers
-- The browser runtime observes and interprets those attributes
-- Communication uses standard web mechanisms: fetch, headers, SSE
-
-This means:
-
-- You can view pages with JavaScript disabled
-- You can progressively enhance without rewriting templates
-- You can reason about behavior from the HTML alone
-
-## Bundling and development workflow
-
-The browser runtime is bundled using:
+Get a flavor for the code in the initial developer experience (DX) entry points:
 
 ```bash
-deno task bundle:client
+$ ./support/dx/hello/counter.ts    # interactive counter increment app
+$ ./support/dx/hello/markdown.ts   # client-side markdown preview app
 ```
 
-That output is committed and served directly. No runtime build step is required
-in production.
+## Modules
 
-Tests are run with:
+Junxion UX is organized intentionally by concern, not by runtime.
 
-```bash
-deno test -A
+### `lib/universal`
+
+Modules that are broadly useful across server and client contexts, independent
+of Continuux itself.
+
+- `fluent-html.ts` is dependency-free, type-safe HTML builder for server-side
+  rendering and tests. It replaces JSX, templating engines, and DOM mutation
+  with explicit, deterministic HTML generation. It is the foundation for all SSR
+  in Junxion UX.
+- `fluent-html-dom.ts` is a twin of `fluent-html.ts` for web browser user
+  agents.
+- Other universal helpers Utilities that are safe to use anywhere and have no
+  browser- or server-specific assumptions.
+
+### `lib/continuux`
+
+The hypermedia interaction layer. This is where server and browser “know” how to
+talk to each other using typed contracts.
+
+- `http.ts`, `bundle.ts`, and related helpers provide Infrastructure for SSE
+  sessions, HTTP responses, and optional on-the-fly bundling of browser modules,
+  kept minimal and auditable.
+
+- `interaction.ts` defines the canonical interaction envelope, event metadata,
+  schema decoding, routing, and diagnostics. This is the server-side foundation
+  of SSE-based interactivity.
+
+- `interaction-browser-ua.js` is a thin browser user agent runtime that:
+  - Delegates DOM events
+  - Builds structured interaction envelopes
+  - Posts them to the server
+  - Maintains an SSE connection
+  - Executes server-sent JavaScript instructions It is intentionally simple,
+    explicit, and not tuned for extreme performance or bundle size.
+
+- `interaction-html.ts` is a type-safe HTML and server wiring helpers that
+  provide the ergonomic surface area similar to HTMX or Datastar, but without
+  stringly-typed attributes. It bridges Fluent HTML with Continuux interactions
+  so developers write functions, not attribute names.
+
+Together, these form Continuux: the server-directed interaction layer inside
+Junxion UX.
+
+## Core architectural concepts
+
+Junxion UX treats HTML and hypermedia as the primary interface between server
+and browser. The browser is not a co-equal application runtime by default. It is
+a progressively enhanced client that becomes more capable only when necessary.
+
+This can be visualized as layers:
+
+```
+Server
+|
++-- Fluent HTML (SSR)
+|
++-- Continuux actions (typed hypermedia)
+|
++-- JSON APIs (only when client state demands it)
 ```
 
-Browser tests are opened directly in a browser:
-
 ```
-http://localhost:8000/lib/html/browser-ua/fluent_test.html
+Browser
+|
++-- Native HTML rendering (with Fluent HTML DOM for helpers)
+|
++-- Continuux browser UA (events + SSE)
+|
++-- Custom Elements (isolated islands, when needed)
 ```
 
-## `src` vs. `lib`
+## Progressive client complexity
 
-The separation between `src` and `lib` is intentional:
+Junxion UX explicitly supports a progression model rather than a single client
+architecture.
 
-- `src` contains code that must be transformed
-- `lib` contains code that can be used or served as-is
-- Server code never depends on browser APIs
-- Browser code never depends on server APIs
+**Stage 1**: SSR only Most pages should live here.
 
-This keeps the system auditable, understandable, and difficult to misuse,
-especially for junior developers.
+- Server renders HTML with Fluent HTML
+- Links and forms drive navigation
+- Full page reloads are acceptable
+- State lives in URLs and server-side logic
+
+This stage is maximally simple, maximally testable, and ideal for AI
+maintenance.
+
+**Stage 2**: SSR plus lightweight SSE interactivity This is the Continuux sweet
+spot.
+
+- HTML is still server-rendered
+- DOM events post typed interaction envelopes
+- Server dispatches actions and pushes updates via SSE
+- Browser executes small, server-directed instructions
+
+This is analogous in spirit to HTMX or Datastar, but with explicit typing,
+schemas, and server-side routing.
+
+**Stage 3**: Web Components with JSON APIs Used when client-side complexity
+becomes real application logic.
+
+- SSR still composes the page
+- Custom Elements act as bounded client-side islands
+- JSON APIs define explicit query and command contracts
+- Optional SSE streams support live updates
+
+This stage is not a failure of SSR or Continuux. It is a recognition that some
+UI problems require local client state. Junxion UX supports this without forcing
+a full SPA architecture.
+
+Client complexity rules of thumb:
+
+If the server can describe the UI change without encoding component state, stay
+in Continuux.
+
+If the client must own complex state transitions, move that part into a Custom
+Element with a proper API.
+
+## AI-first maintainability
+
+Junxion UX is explicitly designed to be maintainable by AI systems, not just
+assisted by them.
+
+This influences several core decisions:
+
+Small surface area There are no large frameworks or deep dependency graphs. Most
+behavior is expressed directly in code within the repository.
+
+Explicit contracts Interaction envelopes, schemas, SSE events, and APIs are all
+typed and validated.
+
+Deterministic behavior HTML output, interaction handling, and SSE messaging are
+designed to be reproducible. This allows tests to assert exact outcomes.
+
+End-to-end testing as a hard requirement Every feature must be fully testable
+using:
+
+- Deno unit tests on the server
+- Playwright tests in a real browser
+
+If a feature cannot be deterministically tested end to end, it should not be
+added.
+
+This is essential for AI maintenance. AI systems iterate by running tests,
+observing failures, and refining behavior. Without deterministic tests, safe
+autonomous maintenance is not possible.
+
+## Why Junxion UX exists
+
+Junxion UX exists to fill a gap between two extremes:
+
+- Static SSR with no interactivity
+- Large client frameworks that push most logic into the browser
+
+It provides a disciplined middle ground:
+
+- Server-first by default
+- Hypermedia-driven interactions
+- Typed contracts everywhere
+- Progressive enhancement instead of premature complexity
+- A codebase small enough for AI to fully understand
+
+Continuux is the interaction engine. Fluent HTML is the rendering substrate. Web
+Components are the scaling mechanism for client complexity. Deterministic
+testing is the enforcement layer.
+
+Together, these form Junxion UX: a pragmatic, AI-first library for building
+modern web UIs that remain understandable long after the original authors, human
+or otherwise, have moved on.

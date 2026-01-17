@@ -1,3 +1,4 @@
+#!/usr/bin/env -S deno run -A --watch --unstable-bundle --node-modules-dir=auto
 // support/assurance/hello/markdown.ts
 /**
  * ContinuUX “Hello World” (Markdown) app.

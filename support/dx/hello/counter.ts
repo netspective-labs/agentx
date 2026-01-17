@@ -1,4 +1,5 @@
-// support/assurance/hello/main.ts
+#!/usr/bin/env -S deno run -A --watch --unstable-bundle --node-modules-dir=auto
+// support/assurance/hello/counter.ts
 /**
  * ContinuUX “Hello World” (Counter) app.
  *
