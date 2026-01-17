@@ -4,7 +4,7 @@
 //
 // Minimal <counter-ce>. CxAide owns sessionId, SSE, and POST wiring.
 
-import { customElementAide } from "../../../lib/continuux/custom-element-aide.js";
+import { customElementAide } from "../../../lib/continuux/browser-ua-aide.js";
 
 const tpl = document.createElement("template");
 tpl.innerHTML = `

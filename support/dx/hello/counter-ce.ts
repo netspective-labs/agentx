@@ -13,7 +13,7 @@
  * - GET  /ce/sse?sessionId=... for server push
  *
  * The client module is plain JS (counter-ce.js) and uses
- * /.cx/custom-element-aide.js (served by this app). No bundling.
+ * /.cx/browser-ua-aide.js (served by this app). No bundling.
  */
 
 import { Application, textResponse } from "../../../lib/continuux/http.ts";
@@ -128,8 +128,8 @@ app.get("/counter-ce.js", async () => {
 
   // Rewrite ONLY what the browser can’t resolve.
   js = js.replace(
-    "../../../lib/continuux/custom-element-aide.js",
-    "/.cx/custom-element-aide.js",
+    "../../../lib/continuux/browser-ua-aide.js",
+    "/.cx/browser-ua-aide.js",
   );
 
   return new Response(js, {
@@ -141,9 +141,9 @@ app.get("/counter-ce.js", async () => {
 });
 
 // Serve the reusable aide module (plain JS).
-app.get("/.cx/custom-element-aide.js", async () => {
+app.get("/.cx/browser-ua-aide.js", async () => {
   const p = await Deno.realPath(
-    fsPath("../../../lib/continuux/custom-element-aide.js"),
+    fsPath("../../../lib/continuux/browser-ua-aide.js"),
   );
   const js = await Deno.readTextFile(p);
   return new Response(js, {
