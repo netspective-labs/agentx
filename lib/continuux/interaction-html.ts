@@ -1,24 +1,80 @@
-// lib/continuux/interaction-html.ts
-//
-// ContinuUX: type-safe interaction HTML + type-safe server wiring.
-//
-// Goal:
-// - Juniors should NOT need to know any attribute strings like "data-cx-on-click"
-//   or endpoint strings like "/cx" when generating HTML.
-// - Juniors should write functions and get strongly typed attrs + handlers.
-// - Provide a typed "actions" registry that:
-//   1) Generates HTML attrs for client -> server posts (CX envelopes)
-//   2) Decodes/validates inbound events on the server
-//   3) Manages SSE sessions and sends typed server -> client events
-//
-// This module intentionally leans on:
-// - html.ts for tag building, Attrs, and safe HTML rendering
-// - http.ts for SSE session primitives
-// - interaction.ts for envelope decoding and UA module serving
-//
-// Note: The browser UA supports an SSE event name "js" that executes JS.
-// This module exposes that as a typed event helper, but you should treat it
-// as privileged. Keep generated JS deterministic and server-controlled.
+/**
+ * lib/continuux/interaction-html.ts
+ *
+ * This module provides the type-safe “surface area” for ContinuUX interactivity,
+ * roughly analogous to what HTMX or Datastar offer, but built around a typed
+ * interaction protocol and server-controlled instructions rather than ad hoc
+ * string attributes and client-owned logic.
+ *
+ * The intent is simple: application code should not require developers to know
+ * or type low-level attribute names (for example `data-cx-on-click`) or wiring
+ * endpoints (for example `/cx`). Instead, developers use strongly typed helpers
+ * that generate the correct attributes and provide matching server-side dispatch
+ * and SSE helpers.
+ *
+ * ContinuUX uses Fluent HTML, not React (or JSX). HTML is generated on the server
+ * using `../universal/fluent-html.ts`, which provides a tiny, dependency-free,
+ * safe-by-default HTML builder (escaping, deterministic output, optional AST
+ * for pretty rendering). This module builds on that foundation to attach
+ * hypermedia-style interaction metadata to Fluent HTML output.
+ *
+ * Hypermedia model (HTMX/Datastar lineage):
+ * - Server-rendered HTML is the default.
+ * - Elements are annotated with declarative interaction metadata.
+ * - The browser user agent observes DOM events and posts a structured envelope
+ *   to the server describing the event and the requested “action”.
+ * - The server validates, dispatches, and responds with instructions.
+ * - When needed, SSE is used as the continuous channel for server-to-client
+ *   events (including privileged JavaScript instructions via a `js` event).
+ *
+ * What you get here:
+ *
+ * 1) createCx(): a typed “kit” that binds HTML generation and server wiring
+ * - `cx.html.*` produces `Attrs` objects to attach to Fluent HTML tags.
+ *   It includes helpers for:
+ *   - booting the browser user agent module (`bootModuleCode`, `bootModuleScriptTag`)
+ *   - configuring the SSE bus (`sse`)
+ *   - attaching optional context to envelopes (`signals`, `headers`, `cxId`)
+ *   - binding DOM events to action specs (`on`, plus `click`, `submit`, etc.)
+ *   - producing action specs with a typed prefix (`spec`)
+ *
+ * 2) Typed action registry
+ * - You define a `schemas` object whose keys are action names.
+ * - Each action has a schema (Zod-like `parse()` or a parser function).
+ * - `CxActionHandlers` derives handler signatures from those schemas, so handlers
+ *   receive strongly typed `data` and consistent interaction context.
+ *
+ * 3) Server-side dispatch helpers
+ * - `dispatchFromRequestJson` decodes and validates inbound envelopes, ensures
+ *   the action prefix matches, validates payloads with the corresponding schema,
+ *   then calls the matching typed handler.
+ * - `toResponse` converts the handler result to an HTTP `Response` (204 on ok).
+ * - `uaModuleResponse` serves the browser UA module with the correct headers.
+ *
+ * 4) SSE hub (typed server -> client events)
+ * - `sseHub()` creates a lightweight in-memory registry of sessions keyed by
+ *   `sessionId`.
+ * - You can send to one session or broadcast to all.
+ * - A privileged `js` helper is provided to emit JavaScript instructions if your
+ *   SSE event map includes `"js"`. This should remain deterministic and strictly
+ *   server-controlled.
+ *
+ * Convenience utilities:
+ * - `defineSchemas()` preserves literal keys for better inference and DX.
+ * - `cxPostHandler()` is a ready-to-plug helper for POST /cx.
+ * - `cxSseRegister()` is a ready-to-plug helper for GET /cx/sse.
+ *
+ * Relationship to other ContinuUX modules:
+ * - `../universal/fluent-html.ts` supplies the HTML builder, attribute typing,
+ *   and safe rendering.
+ * - `./http.ts` supplies the Fetch-native router and SSE session primitives.
+ * - `./interaction.ts` supplies envelope decoding and browser UA module support.
+ *
+ * Overall, this module is the “developer-facing hypermedia layer”: it makes the
+ * HTMX/Datastar-style approach feel natural in TypeScript by replacing stringly
+ * attributes and loosely coupled wiring with a single, typed kit that spans
+ * HTML generation, action validation/dispatch, and SSE-driven interactivity.
+ */
 
 import type { Attrs, RawHtml } from "../universal/fluent-html.ts";
 import { script, trustedRaw } from "../universal/fluent-html.ts";

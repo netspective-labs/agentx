@@ -1,7 +1,74 @@
-// lib/continuux/interaction.ts
-//
-// Server-side helpers + userAgentAide for serving the browser UA module.
-// This file assumes it sits next to "./interaction-browser-ua.js".
+/**
+ * lib/continuux/interaction.ts
+ *
+ * This module is the foundation of ContinuUX’s SSE-based interactivity layer and
+ * is designed to work in lockstep with `lib/continuux/http.ts`. Together, these
+ * modules enable a hypermedia-style interaction model where the server remains
+ * the primary source of truth and the browser executes instructions rather than
+ * owning application logic.
+ *
+ * Conceptually, this follows the same lineage as HTMX or Datastar, but with an
+ * explicit, typed JavaScript contract instead of HTML attributes or opaque
+ * string commands. Interactions are expressed as small, structured “actions”
+ * embedded in DOM metadata and posted back to the server. These actions form a
+ * tiny, inspectable DSL that the server decodes, validates, and evaluates.
+ *
+ * Core ideas:
+ *
+ * 1) Hypermedia via typed JavaScript instructions
+ * Instead of shipping large client-side frameworks, the browser user agent
+ * (“browser-ua”) acts as a thin executor. It observes DOM events, packages them
+ * into structured interaction envelopes, and sends them to the server. The
+ * server responds with JavaScript-based instructions that describe *what should
+ * happen next*, not how to reimplement application state in the browser.
+ *
+ * All meaningful interactivity flows through:
+ * - signals emitted by the browser
+ * - actions evaluated by the server
+ * - JavaScript snippets returned as instructions
+ *
+ * 2) Interaction envelopes as the hypermedia contract
+ * Each browser interaction is captured as a `CxInteractionEnvelope` describing:
+ * - the DOM event and the associated action spec
+ * - element, client, and navigation context
+ * - optional pointer, key, input, and form data
+ *
+ * These envelopes are decoded defensively to ensure the server only evaluates
+ * well-formed, intentional interactions.
+ *
+ * 3) Typed interaction routing and evaluation
+ * The `cxRouter` provides a typed dispatch layer for interaction “actions”:
+ * - routes are registered by name, not by URL
+ * - payloads are validated via schemas or parsers
+ * - handlers run with full access to request state, per-request vars, and
+ *   decoded interaction context
+ *
+ * The result of a handler is not UI state, but instructions that guide the
+ * browser’s next step.
+ *
+ * 4) SSE as the continuity channel
+ * When needed, server-sent events are used as a continuous coordination channel
+ * between server and browser. This allows the server to push instruction streams
+ * to the client, enabling progressive updates, long-running workflows, and
+ * reactive UI behavior without client-side state machines.
+ *
+ * 5) User agent aide and attribute conventions
+ * The `userAgentAide` exposes canonical `data-cx-*` attributes for annotating
+ * server-rendered HTML, along with helpers to serve and bootstrap the browser
+ * user agent module. This keeps markup declarative while leaving interpretation
+ * and execution to the server.
+ *
+ * Architectural intent:
+ * - Server-driven hypermedia, not client-owned application logic
+ * - Typed, inspectable interaction contracts instead of stringly-typed commands
+ * - JavaScript as the instruction format, not a framework runtime
+ * - Plain SSR when interactivity is unnecessary; continuous SSE-driven behavior
+ *   when it is
+ *
+ * This module is not a UI framework. It is a protocol and dispatch layer that
+ * enables continuous, server-directed UX using hypermedia principles expressed
+ * through typed JavaScript instructions.
+ */
 
 export type AttrValue = string | number | boolean | null | undefined;
 export type Attrs = Record<string, AttrValue>;

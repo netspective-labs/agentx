@@ -1,21 +1,65 @@
-// lib/continuux/http.ts
 /**
- * ContinuUX HTTP utilities (server-side) for pure TypeScript web UIs.
+ * lib/continuux/http.ts
  *
- * What this module gives you:
- * - Small response helpers (html/js/text/json)
- * - In-memory module bundling (Deno.bundle) with caching
- * - SSE helpers (safe on disconnect, type-safe events, abort-aware)
- * - A tiny Hono-inspired router with full type inference (no "GET /x" key strings)
- * - Typed per-request vars (middleware-friendly) + basic observability hooks
+ * This module provides a small, explicit, and fully type-safe HTTP foundation
+ * for building pure TypeScript web UIs on Deno. It is intentionally minimal,
+ * framework-light, and Fetch-native, with a strong emphasis on deterministic
+ * behavior, explicit state semantics, and end-to-end type inference.
  *
- * Important: Application state semantics are explicit.
- * You must choose one of these when creating an Application:
- * - sharedState(state): every request sees the same object reference (mutations persist)
- * - snapshotState(state): each request receives a cloned snapshot (mutations do NOT persist)
- * - stateFactory(fn): each request receives state produced by a factory (request-scoped, etc.)
+ * Design goals:
+ * - No hidden globals, registries, or implicit state
+ * - Explicit request and application state lifetimes
+ * - Strong typing for routes, params, SSE events, and per-request variables
+ * - Safe defaults for streaming, abort handling, and observability
+ * - Compatibility with Deno.serve and standard Fetch APIs
  *
- * This prevents the classic confusion of “does c.state persist between requests?”
+ * What this module provides:
+ *
+ * Response helpers:
+ * - Convenience helpers for text, HTML, JSON, and JavaScript responses
+ * - Correct handling of Fetch edge cases (e.g. 204 / 304 with no body)
+ *
+ * Server-Sent Events (SSE):
+ * - Type-safe SSE sessions via event maps
+ * - Abort-aware lifecycle management using AbortSignal
+ * - Automatic keepalive comments and optional retry hints
+ * - Safe cleanup on disconnect to prevent leaked intervals or streams
+ *
+ * Typed router:
+ * - Hono-inspired router without stringly-typed route keys
+ * - Compile-time inference of path parameters from literal route strings
+ * - Middleware with access to matched params
+ * - Route grouping via typed base paths
+ *
+ * Application state semantics (explicit by construction):
+ * - sharedState: one shared mutable object across all requests
+ * - snapshotState: cloned state per request (mutations do not persist)
+ * - stateFactory: per-request state produced by a factory
+ *
+ * These strategies remove ambiguity about whether state persists between
+ * requests and make lifecycle choices explicit and inspectable.
+ *
+ * Per-request variables:
+ * - Typed, mutable vars scoped to a single request
+ * - Middleware-friendly storage for cross-cutting concerns
+ *
+ * Observability hooks:
+ * - Optional hooks for request start, response completion, timing, and errors
+ * - Minimal surface area, no imposed logging or tracing framework
+ *
+ * Architectural stance:
+ * - No static file serving from disk
+ * - Browser assets are expected to be served as bundled modules
+ * - Encourages fully TypeScript-driven UI delivery
+ *
+ * Intended usage:
+ * - Small to medium servers where correctness, clarity, and type safety matter
+ * - Pure TypeScript UI stacks without heavyweight frameworks
+ * - Systems that value explicit state and deterministic behavior
+ *
+ * This module is not a general-purpose web framework. It is a focused,
+ * composable HTTP core designed to stay understandable, auditable, and
+ * predictable as applications grow.
  */
 
 /* =========================
