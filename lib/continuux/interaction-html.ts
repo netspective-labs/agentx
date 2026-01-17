@@ -20,8 +20,8 @@
 // This module exposes that as a typed event helper, but you should treat it
 // as privileged. Keep generated JS deterministic and server-controlled.
 
-import type { Attrs, RawHtml } from "./html.ts";
-import { script, trustedRaw } from "./html.ts";
+import type { Attrs, RawHtml } from "../universal/fluent-html.ts";
+import { script, trustedRaw } from "../universal/fluent-html.ts";
 import type { SseEventMap, SseSession } from "./http.ts";
 import type {
   CxDomEventName,

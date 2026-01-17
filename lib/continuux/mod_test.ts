@@ -42,7 +42,7 @@ import {
   script,
   title,
   trustedRaw,
-} from "./html.ts";
+} from "../universal/fluent-html.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

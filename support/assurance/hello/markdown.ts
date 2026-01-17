@@ -18,7 +18,7 @@
  */
 
 import { autoTsJsBundler } from "../../../lib/continuux/bundle.ts";
-import * as H from "../../../lib/continuux/html.ts";
+import * as H from "../../../lib/universal/fluent-html.ts";
 import { Application } from "../../../lib/continuux/http.ts";
 
 type State = Record<string, never>;

@@ -15,7 +15,7 @@
  *   deno run -A support/assurance/hello/counter.ts
  */
 
-import * as H from "../../../lib/continuux/html.ts";
+import * as H from "../../../lib/universal/fluent-html.ts";
 import { Application, textResponse } from "../../../lib/continuux/http.ts";
 import {
   createCx,
