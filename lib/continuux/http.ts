@@ -154,11 +154,9 @@ export type SseEventMap = Record<string, unknown>;
 export type SseOptions = {
   headers?: HeadersInit;
   retryMs?: number;
-  disableProxyBuffering?: boolean; // default true
-  keepAliveMs?: number; // default 15000
-  keepAliveComment?: string; // default "keepalive"
-
-  // If provided, session closes when signal aborts (prevents leaked intervals).
+  disableProxyBuffering?: boolean;
+  keepAliveMs?: number;
+  keepAliveComment?: string;
   signal?: AbortSignal;
 };
 
@@ -172,8 +170,6 @@ export type SseSession<E extends SseEventMap> = {
   sendWhenReady: <K extends keyof E>(event: K, data: E[K]) => Promise<boolean>;
 
   comment: (text?: string) => boolean;
-
-  // Always available. Uses SSE "error" event name.
   error: (message: string) => boolean;
 };
 
@@ -369,35 +365,17 @@ export type ParamsOf<Path extends string> = IsWideString<Path> extends true
 
 export type SchemaLike<T> = { parse: (u: unknown) => T };
 
-export type ObservabilityHooks<V extends VarsRecord> = {
-  onRequest?: (c: HandlerCtx<string, VarsRecord, V>) => void;
-  onResponse?: (
-    c: HandlerCtx<string, VarsRecord, V>,
-    r: Response,
-    ms: number,
-  ) => void;
-  onError?: (c: HandlerCtx<string, VarsRecord, V>, err: unknown) => void;
-};
-
 type HandlerCtx<Path extends string, State, Vars extends VarsRecord> = {
   req: Request;
   url: URL;
   params: ParamsOf<Path>;
 
-  /**
-   * Request state as defined by Application state semantics:
-   * - sharedState: shared reference across requests
-   * - snapshotState: cloned snapshot per request
-   * - stateFactory: produced per request
-   */
   state: State;
 
-  // Typed per-request vars (middleware-friendly).
   vars: Vars;
   getVar: <K extends keyof Vars>(key: K) => Vars[K];
   setVar: <K extends keyof Vars>(key: K, value: Vars[K]) => void;
 
-  // Basic request correlation.
   requestId: string;
 
   text: (body: string, init?: ResponseInit) => Response;
@@ -434,6 +412,16 @@ export type Middleware<State, Vars extends VarsRecord> = (
   c: HandlerCtx<string, State, Vars>,
   next: () => Promise<Response>,
 ) => Response | Promise<Response>;
+
+export type ObservabilityHooks<State, Vars extends VarsRecord> = {
+  onRequest?: (c: HandlerCtx<string, State, Vars>) => void;
+  onResponse?: (
+    c: HandlerCtx<string, State, Vars>,
+    r: Response,
+    ms: number,
+  ) => void;
+  onError?: (c: HandlerCtx<string, State, Vars>, err: unknown) => void;
+};
 
 export type CompiledRoute<State, Vars extends VarsRecord> = {
   method: HttpMethod;
@@ -479,28 +467,19 @@ type JoinPath<Base extends string, Path extends string> = `${Base}${Path extends
 const genRequestId = () => (globalThis.crypto?.randomUUID?.() ??
   `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`);
 
-/**
- * Middleware helper: enable basic observability hooks with minimal boilerplate.
- * Usage:
- *   app.use(observe({ onResponse: (c,r,ms) => ... }))
- */
 export const observe = <State, Vars extends VarsRecord>(
-  hooks: ObservabilityHooks<Vars>,
+  hooks: ObservabilityHooks<State, Vars>,
 ): Middleware<State, Vars> =>
 async (c, next) => {
   const t0 = performance.now();
   try {
-    hooks.onRequest?.(c as unknown as HandlerCtx<string, VarsRecord, Vars>);
+    hooks.onRequest?.(c);
     const r = await next();
     const ms = performance.now() - t0;
-    hooks.onResponse?.(
-      c as unknown as HandlerCtx<string, VarsRecord, Vars>,
-      r,
-      ms,
-    );
+    hooks.onResponse?.(c, r, ms);
     return r;
   } catch (err) {
-    hooks.onError?.(c as unknown as HandlerCtx<string, VarsRecord, Vars>, err);
+    hooks.onError?.(c, err);
     throw err;
   }
 };
@@ -575,9 +554,13 @@ export class Application<
     return this.#stateProvider.strategy;
   }
 
-  // If you want typed vars, do:
-  //   const app = Application.sharedState(state).withVars<{ userId: string }>()
-  withVars<More extends VarsRecord>(): Application<State, Vars & More> {
+  // Overload 1: generic-only, explicit type parameter.
+  withVars<More extends VarsRecord>(): Application<State, Vars & More>;
+  // Overload 2: shape-based inference, juniors can pass an example object.
+  withVars<More extends VarsRecord>(_: More): Application<State, Vars & More>;
+  withVars<More extends VarsRecord>(
+    _?: More,
+  ): Application<State, Vars & More> {
     return this as unknown as Application<State, Vars & More>;
   }
 
@@ -635,7 +618,6 @@ export class Application<
     const method = req.method.toUpperCase() as HttpMethod;
     const path = url.pathname;
 
-    // Match first so params are available to middleware (like Hono).
     const match = this.#match(method, path);
     const params = match?.params ?? ({} as AnyParams);
 
@@ -651,7 +633,6 @@ export class Application<
     const requestId = genRequestId();
     const vars = Object.create(null) as Vars;
 
-    // Explicit, per-request state creation.
     const state = this.#stateProvider.getState(req);
 
     const dispatch = (): Promise<Response> => {
@@ -676,7 +657,14 @@ export class Application<
 
     const run = (i: number): Promise<Response> => {
       if (i >= mw.length) return dispatch();
-      const ctx = this.#ctx(req, url, params, state, vars, requestId);
+      const ctx = this.#ctx<string>(
+        req,
+        url,
+        params,
+        state,
+        vars,
+        requestId,
+      );
       const fn = mw[i];
       return Promise.resolve(fn(ctx, () => run(i + 1)));
     };
@@ -713,19 +701,20 @@ export class Application<
     return null;
   }
 
-  #ctx(
+  #ctx<Path extends string>(
     req: Request,
     url: URL,
     params: AnyParams,
     state: State,
     vars: Vars,
     requestId: string,
-  ): HandlerCtx<string, State, Vars> {
+  ): HandlerCtx<Path, State, Vars> {
     const initWith = (init?: ResponseInit) => init ?? {};
+    const typedParams = params as ParamsOf<Path>;
     return {
       req,
       url,
-      params,
+      params: typedParams,
       state,
 
       vars,
@@ -773,7 +762,7 @@ export class Application<
       sse: <E extends SseEventMap>(
         producer: (
           session: SseSession<E>,
-          c: HandlerCtx<string, State, Vars>,
+          c: HandlerCtx<Path, State, Vars>,
         ) => void | Promise<void>,
         opts?: Omit<SseOptions, "signal">,
       ) => {
@@ -783,7 +772,14 @@ export class Application<
             await session.ready;
             await producer(
               session,
-              this.#ctx(req, url, params, state, vars, requestId),
+              this.#ctx<Path>(
+                req,
+                url,
+                params,
+                state,
+                vars,
+                requestId,
+              ),
             );
           } catch (err) {
             const e = asError(err);
@@ -812,18 +808,14 @@ export class Application<
       vars: Vars,
       requestId: string,
     ) => {
-      const ctx = this.#ctx(
+      const ctx = this.#ctx<Path>(
         req,
         url,
         params,
         state,
         vars,
         requestId,
-      ) as unknown as HandlerCtx<
-        Path,
-        State,
-        Vars
-      >;
+      );
       return await h(ctx);
     };
 
