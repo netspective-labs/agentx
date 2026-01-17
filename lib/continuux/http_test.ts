@@ -716,3 +716,143 @@ Deno.test(
     }
   },
 );
+
+/**
+ * New tests for:
+ * - wildcard routes (*path)
+ * - constrained params (:id{[0-9]+})
+ * - route metadata + schemas
+ * - routes() introspection
+ * - invalid route patterns (multiple wildcards) throwing at registration
+ */
+Deno.test(
+  "wildcard and constrained routes + routes() introspection",
+  async (t) => {
+    // deno-lint-ignore ban-types
+    const app = Application.sharedState<{}>({}).withVars<{}>();
+
+    // Wildcard route: captures the rest of the path in c.params.path
+    app.get("/files/*path", (c) => c.text(`files:${c.params.path}`));
+
+    // Constrained numeric id route
+    app.get("/orders/:id{[0-9]+}", (c) => c.text(`order:${c.params.id}`));
+
+    // Constrained route with metadata and schemas
+    app.get(
+      "/orders/:id{[0-9]+}/detail",
+      {
+        meta: {
+          summary: "Order detail",
+          description: "Detailed information about an order",
+          tags: ["orders", "detail"],
+          auth: "protected",
+        },
+        schemas: {
+          params: { kind: "order-id", type: "number" },
+          response: { kind: "order-detail" },
+        },
+      },
+      (c) => c.text(`detail:${c.params.id}`),
+    );
+
+    const server = startServer((req) => app.fetch(req));
+
+    try {
+      await t.step("wildcard route captures rest of path", async () => {
+        const r = await fetch(`${server.baseUrl}/files/a/b/c.txt`);
+        const body = await r.text();
+        if (r.status !== 200) throw new Error("status mismatch");
+        if (body !== "files:a/b/c.txt") {
+          throw new Error(`wildcard body mismatch: ${body}`);
+        }
+      });
+
+      await t.step("constrained numeric param matches and binds", async () => {
+        const r = await fetch(`${server.baseUrl}/orders/123`);
+        const body = await r.text();
+        if (r.status !== 200) throw new Error("status mismatch");
+        if (body !== "order:123") {
+          throw new Error(`constrained route body mismatch: ${body}`);
+        }
+      });
+
+      await t.step(
+        "constrained param rejects non-matching paths (404)",
+        async () => {
+          const r = await fetch(`${server.baseUrl}/orders/abc`);
+          if (r.status !== 404) {
+            throw new Error(`expected 404 for non-numeric id, got ${r.status}`);
+          }
+          await r.text(); // consume
+        },
+      );
+
+      await t.step(
+        "metadata route matches and routes() exposes meta + schemas",
+        async () => {
+          const r = await fetch(`${server.baseUrl}/orders/42/detail`);
+          const body = await r.text();
+          if (r.status !== 200) throw new Error("status mismatch");
+          if (body !== "detail:42") {
+            throw new Error(`detail body mismatch: ${body}`);
+          }
+
+          const routes = app.routes();
+          const detailRoute = routes.find((rt) =>
+            rt.path === "/orders/:id{[0-9]+}/detail"
+          );
+          if (!detailRoute) throw new Error("detail route missing in routes()");
+
+          if (!detailRoute.meta) throw new Error("meta missing on detailRoute");
+          if (detailRoute.meta.summary !== "Order detail") {
+            throw new Error("meta.summary mismatch");
+          }
+          if (
+            !detailRoute.meta.tags ||
+            !detailRoute.meta.tags.includes("orders") ||
+            !detailRoute.meta.tags.includes("detail")
+          ) {
+            throw new Error("meta.tags mismatch");
+          }
+          if (detailRoute.meta.auth !== "protected") {
+            throw new Error("meta.auth mismatch");
+          }
+
+          if (!detailRoute.schemas) {
+            throw new Error("schemas missing on detailRoute");
+          }
+          const paramsSchema = detailRoute.schemas.params as
+            | { kind?: string; type?: string }
+            | undefined;
+          const respSchema = detailRoute.schemas.response as
+            | { kind?: string }
+            | undefined;
+          if (!paramsSchema || paramsSchema.kind !== "order-id") {
+            throw new Error("schemas.params mismatch");
+          }
+          if (!respSchema || respSchema.kind !== "order-detail") {
+            throw new Error("schemas.response mismatch");
+          }
+        },
+      );
+    } finally {
+      await server.close();
+    }
+  },
+);
+
+Deno.test("invalid route patterns: multiple wildcards throw at registration", () => {
+  // deno-lint-ignore ban-types
+  const app = Application.sharedState<{}>({});
+
+  let threw = false;
+  try {
+    app.get("/a/*x/*y", (c) => c.text("bad"));
+  } catch {
+    threw = true;
+  }
+
+  if (!threw) {
+    throw new Error("expected app.get('/a/*x/*y', ...) to throw");
+  }
+});

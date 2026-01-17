@@ -62,6 +62,9 @@
  * predictable as applications grow.
  */
 
+// deno-lint-ignore no-explicit-any
+type Any = any;
+
 /* =========================
  * response helpers
  * ========================= */
@@ -157,6 +160,8 @@ export type SseOptions = {
   disableProxyBuffering?: boolean; // default true
   keepAliveMs?: number; // default 15000
   keepAliveComment?: string; // default "keepalive"
+
+  // If provided, session closes when signal aborts (prevents leaked intervals).
   signal?: AbortSignal;
 };
 
@@ -170,6 +175,8 @@ export type SseSession<E extends SseEventMap> = {
   sendWhenReady: <K extends keyof E>(event: K, data: E[K]) => Promise<boolean>;
 
   comment: (text?: string) => boolean;
+
+  // Always available. Uses SSE "error" event name.
   error: (message: string) => boolean;
 };
 
@@ -353,10 +360,26 @@ export type HttpMethod =
 
 type IsWideString<S extends string> = string extends S ? true : false;
 
-type ExtractParamName<S extends string> = S extends
-  `${string}:${infer P}/${infer Rest}` ? P | ExtractParamName<`/${Rest}`>
-  : S extends `${string}:${infer P}` ? P
-  : never;
+// Strip optional `{...}` constraint from a param segment, e.g.
+// "id{[0-9]+}" -> "id"
+type StripConstraint<S extends string> = S extends `${infer Name}{${string}}`
+  ? Name
+  : S;
+
+// Extract param names from a path template, supporting:
+// - :id
+// - :id{[0-9]+}
+// - *path (wildcard segment)
+type ExtractParamName<S extends string> =
+  // segment with ":" (param)
+  S extends `${string}:${infer P}/${infer Rest}`
+    ? StripConstraint<P> | ExtractParamName<`/${Rest}`>
+    : S extends `${string}:${infer P}` ? StripConstraint<P>
+    // segment with "*" (wildcard)
+    : S extends `${string}*${infer W}/${infer Rest}`
+      ? W | ExtractParamName<`/${Rest}`>
+    : S extends `${string}*${infer W}` ? W
+    : never;
 
 export type ParamsOf<Path extends string> = IsWideString<Path> extends true
   ? AnyParams
@@ -365,17 +388,55 @@ export type ParamsOf<Path extends string> = IsWideString<Path> extends true
 
 export type SchemaLike<T> = { parse: (u: unknown) => T };
 
+export type RouteSchemas = {
+  params?: unknown;
+  query?: unknown;
+  json?: unknown;
+  response?: unknown;
+};
+
+export type RouteMeta = {
+  summary?: string;
+  description?: string;
+  tags?: string[];
+  auth?: string;
+  [key: string]: unknown;
+};
+
+export type RouteConfig = {
+  meta?: RouteMeta;
+  schemas?: RouteSchemas;
+};
+
+export type ObservabilityHooks<V extends VarsRecord> = {
+  onRequest?: (c: HandlerCtx<string, VarsRecord, V>) => void;
+  onResponse?: (
+    c: HandlerCtx<string, VarsRecord, V>,
+    r: Response,
+    ms: number,
+  ) => void;
+  onError?: (c: HandlerCtx<string, VarsRecord, V>, err: unknown) => void;
+};
+
 export type HandlerCtx<Path extends string, State, Vars extends VarsRecord> = {
   req: Request;
   url: URL;
   params: ParamsOf<Path>;
 
+  /**
+   * Request state as defined by Application state semantics:
+   * - sharedState: shared reference across requests
+   * - snapshotState: cloned snapshot per request
+   * - stateFactory: produced per request
+   */
   state: State;
 
+  // Typed per-request vars (middleware-friendly).
   vars: Vars;
   getVar: <K extends keyof Vars>(key: K) => Vars[K];
   setVar: <K extends keyof Vars>(key: K, value: Vars[K]) => void;
 
+  // Basic request correlation.
   requestId: string;
 
   text: (body: string, init?: ResponseInit) => Response;
@@ -413,7 +474,6 @@ export type Middleware<State, Vars extends VarsRecord> = (
   next: () => Promise<Response>,
 ) => Response | Promise<Response>;
 
-// Per-route middleware: typed to the route's Path so params are strongly typed.
 export type RouteMiddleware<
   Path extends string,
   State,
@@ -423,17 +483,7 @@ export type RouteMiddleware<
   next: () => Promise<Response>,
 ) => Response | Promise<Response>;
 
-export type ObservabilityHooks<State, Vars extends VarsRecord> = {
-  onRequest?: (c: HandlerCtx<string, State, Vars>) => void;
-  onResponse?: (
-    c: HandlerCtx<string, State, Vars>,
-    r: Response,
-    ms: number,
-  ) => void;
-  onError?: (c: HandlerCtx<string, State, Vars>, err: unknown) => void;
-};
-
-export type CompiledRoute<State, Vars extends VarsRecord> = {
+type InternalRoute<State, Vars extends VarsRecord> = {
   method: HttpMethod;
   template: string;
   keys: string[];
@@ -446,20 +496,81 @@ export type CompiledRoute<State, Vars extends VarsRecord> = {
     vars: Vars,
     requestId: string,
   ) => Promise<Response>;
+  meta?: RouteMeta;
+  schemas?: RouteSchemas;
+};
+
+export type CompiledRoute<State, Vars extends VarsRecord> = InternalRoute<
+  State,
+  Vars
+>;
+
+export type RouteInfo = {
+  method: HttpMethod;
+  path: string;
+  keys: string[];
+  meta?: RouteMeta;
+  schemas?: RouteSchemas;
 };
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-const compilePath = (template: string): { re: RegExp; keys: string[] } => {
+/**
+ * Compile a path template like:
+ *   /users/:id
+ *   /files/*path
+ *   /orders/:id{[0-9]+}
+ *
+ * Supported patterns:
+ * - :name          → single segment param
+ * - :name{regex}   → single segment param with custom regex
+ * - *rest          → wildcard capturing the rest of the path (must be last)
+ */
+const compilePath = (
+  template: string,
+): { re: RegExp; keys: string[] } => {
   const keys: string[] = [];
   const parts = template.split("/").filter((p) => p.length > 0);
-  const reParts = parts.map((p) => {
-    if (p.startsWith(":")) {
-      keys.push(p.slice(1));
-      return "([^/]+)";
+  const reParts: string[] = [];
+  let sawWildcard = false;
+
+  parts.forEach((part, idx) => {
+    // Wildcard: *rest
+    if (part.startsWith("*")) {
+      if (sawWildcard) {
+        throw new Error(
+          `Only one wildcard segment is allowed in path: ${template}`,
+        );
+      }
+      if (idx !== parts.length - 1) {
+        throw new Error(
+          `Wildcard segment must be last in path: ${template}`,
+        );
+      }
+      sawWildcard = true;
+      const name = part.slice(1) || "wildcard";
+      keys.push(name);
+      reParts.push("(.*)");
+      return;
     }
-    return escapeRe(p);
+
+    // Param: :id or :id{[0-9]+}
+    if (part.startsWith(":")) {
+      const m = /^:([^{}]+)(?:\{(.+)\})?$/.exec(part);
+      if (!m) {
+        throw new Error(`Invalid param segment in path: ${part}`);
+      }
+      const [, name, pattern] = m;
+      keys.push(name);
+      const body = pattern ?? "[^/]+";
+      reParts.push(`(${body})`);
+      return;
+    }
+
+    // Literal
+    reParts.push(escapeRe(part));
   });
+
   const re = new RegExp(`^/${reParts.join("/")}/?$`);
   return { re, keys };
 };
@@ -477,57 +588,48 @@ type JoinPath<Base extends string, Path extends string> = `${Base}${Path extends
 const genRequestId = () => (globalThis.crypto?.randomUUID?.() ??
   `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`);
 
+/**
+ * Middleware helper: enable basic observability hooks with minimal boilerplate.
+ * Usage:
+ *   app.use(observe({ onResponse: (c,r,ms) => ... }))
+ */
+export const observe = <State, Vars extends VarsRecord>(
+  hooks: ObservabilityHooks<Vars>,
+): Middleware<State, Vars> =>
+async (c, next) => {
+  const t0 = performance.now();
+  try {
+    hooks.onRequest?.(c as unknown as HandlerCtx<string, VarsRecord, Vars>);
+    const r = await next();
+    const ms = performance.now() - t0;
+    hooks.onResponse?.(
+      c as unknown as HandlerCtx<string, VarsRecord, Vars>,
+      r,
+      ms,
+    );
+    return r;
+  } catch (err) {
+    hooks.onError?.(
+      c as unknown as HandlerCtx<string, VarsRecord, Vars>,
+      err,
+    );
+    throw err;
+  }
+};
+
 /* =========================
- * Middleware helpers
+ * Middleware composition helpers
  * ========================= */
 
-// Compose global middleware into a single middleware.
 export const composeMiddleware = <State, Vars extends VarsRecord>(
   ...mws: Middleware<State, Vars>[]
 ): Middleware<State, Vars> =>
 (c, next) => {
   const run = (i: number): Promise<Response> => {
     if (i >= mws.length) return next();
-    const mw = mws[i];
-    return Promise.resolve(mw(c, () => run(i + 1)));
+    return Promise.resolve(mws[i](c, () => run(i + 1)));
   };
   return run(0);
-};
-
-// Compose per-route middleware plus final handler.
-const composeRoute = <
-  Path extends string,
-  State,
-  Vars extends VarsRecord,
->(
-  mws: RouteMiddleware<Path, State, Vars>[],
-  handler: Handler<Path, State, Vars>,
-): (c: HandlerCtx<Path, State, Vars>) => Promise<Response> => {
-  return (c) => {
-    const run = (i: number): Promise<Response> => {
-      if (i >= mws.length) return Promise.resolve(handler(c));
-      const mw = mws[i];
-      return Promise.resolve(mw(c, () => run(i + 1)));
-    };
-    return run(0);
-  };
-};
-
-export const observe = <State, Vars extends VarsRecord>(
-  hooks: ObservabilityHooks<State, Vars>,
-): Middleware<State, Vars> =>
-async (c, next) => {
-  const t0 = performance.now();
-  try {
-    hooks.onRequest?.(c);
-    const r = await next();
-    const ms = performance.now() - t0;
-    hooks.onResponse?.(c, r, ms);
-    return r;
-  } catch (err) {
-    hooks.onError?.(c, err);
-    throw err;
-  }
 };
 
 /* =========================
@@ -554,18 +656,14 @@ export class Application<
   State extends Record<string, unknown> = EmptyRecord,
   Vars extends VarsRecord = EmptyRecord,
 > {
-  readonly #routes: CompiledRoute<State, Vars>[] = [];
+  readonly #routes: InternalRoute<State, Vars>[] = [];
   readonly #mw: Array<{ base: string; fn: Middleware<State, Vars> }> = [];
   readonly #stateProvider: StateProvider<State>;
-  #onError?:
-    | ((
-      err: unknown,
-      c: HandlerCtx<string, State, Vars>,
-    ) => Response | Promise<Response>)
-    | undefined;
-  #onNotFound?:
-    | ((c: HandlerCtx<string, State, Vars>) => Response | Promise<Response>)
-    | undefined;
+  #onErrorHandler?: (
+    err: unknown,
+    c: HandlerCtx<string, State, Vars>,
+  ) => Response | Promise<Response>;
+  #notFoundHandler?: Handler<string, State, Vars>;
 
   private constructor(stateProvider: StateProvider<State>) {
     this.#stateProvider = stateProvider;
@@ -609,33 +707,10 @@ export class Application<
     return this.#stateProvider.strategy;
   }
 
-  // Overload 1: generic-only, explicit type parameter.
-  withVars<More extends VarsRecord>(): Application<State, Vars & More>;
-  // Overload 2: shape-based inference, juniors can pass an example object.
-  withVars<More extends VarsRecord>(_: More): Application<State, Vars & More>;
-  withVars<More extends VarsRecord>(
-    _?: More,
-  ): Application<State, Vars & More> {
+  // If you want typed vars, do:
+  //   const app = Application.sharedState(state).withVars<{ userId: string }>()
+  withVars<More extends VarsRecord>(): Application<State, Vars & More> {
     return this as unknown as Application<State, Vars & More>;
-  }
-
-  // Configure global error handler.
-  onError(
-    fn: (
-      err: unknown,
-      c: HandlerCtx<string, State, Vars>,
-    ) => Response | Promise<Response>,
-  ): this {
-    this.#onError = fn;
-    return this;
-  }
-
-  // Configure global not-found handler.
-  notFound(
-    fn: (c: HandlerCtx<string, State, Vars>) => Response | Promise<Response>,
-  ): this {
-    this.#onNotFound = fn;
-    return this;
   }
 
   use(fn: Middleware<State, Vars>): this;
@@ -652,123 +727,215 @@ export class Application<
     return this;
   }
 
-  // Mount a child Application under a base path (sub-app mounting).
-  mount<Base extends string>(
-    base: Base,
-    child: Application<State, Vars>,
+  /**
+   * Set a global error handler that receives any thrown error and
+   * the current request context, and returns a Response.
+   */
+  onError(
+    fn: (
+      err: unknown,
+      c: HandlerCtx<string, State, Vars>,
+    ) => Response | Promise<Response>,
   ): this {
-    const baseNorm = base.endsWith("/") ? base.slice(0, -1) : base;
-    this.use(baseNorm, async (c) => {
-      const url = new URL(c.req.url);
-      const path = url.pathname;
-      const prefix = baseNorm;
-      const newPath = path.startsWith(prefix)
-        ? path.slice(prefix.length) || "/"
-        : path;
-      url.pathname = newPath;
-      const childReq = new Request(url.toString(), c.req);
-      return await child.fetch(childReq);
-    });
+    this.#onErrorHandler = fn;
     return this;
   }
 
-  // Route methods with per-route middleware support:
-  // app.get("/path", handler)
-  // app.get("/path", mw1, mw2, handler)
+  /**
+   * Set a global not-found handler for unmatched routes.
+   */
+  notFound(handler: Handler<string, State, Vars>): this {
+    this.#notFoundHandler = handler;
+    return this;
+  }
+
+  /**
+   * Mount a child Application under a base path. The child Application
+   * has its own state semantics and routes; the base path is stripped
+   * from the URL path before dispatching to the child.
+   */
+  mount(base: string, child: Application<State, Vars>): this {
+    const baseNorm = base.endsWith("/") ? base.slice(0, -1) : base;
+    if (!baseNorm) {
+      throw new Error("mount(base, child) requires non-empty base path");
+    }
+
+    this.use(baseNorm, async (c, _next) => {
+      const url = new URL(c.req.url);
+      if (!url.pathname.startsWith(baseNorm)) {
+        return methodNotAllowed(url.pathname, "");
+      }
+      url.pathname = url.pathname.slice(baseNorm.length) || "/";
+      const req2 = new Request(url.toString(), c.req);
+      return await child.fetch(req2);
+    });
+
+    return this;
+  }
+
+  /* ============
+   * Route verbs
+   * ============
+   *
+   * Variants:
+   * - app.get("/x", handler)
+   * - app.get("/x", mw1, mw2, handler)
+   * - app.get("/x", config, handler)
+   */
+
+  get<Path extends string>(
+    path: Path,
+    handler: Handler<Path, State, Vars>,
+  ): this;
   get<Path extends string>(
     path: Path,
     ...handlers: [
       ...RouteMiddleware<Path, State, Vars>[],
-      Handler<Path, State, Vars>,
+      Handler<
+        Path,
+        State,
+        Vars
+      >,
     ]
-  ): this {
-    const routeMws = handlers.slice(
-      0,
-      -1,
-    ) as RouteMiddleware<Path, State, Vars>[];
-    const h = handlers[handlers.length - 1] as Handler<Path, State, Vars>;
-    return this.#add("GET", path, routeMws, h);
+  ): this;
+  get<Path extends string>(
+    path: Path,
+    config: RouteConfig,
+    handler: Handler<Path, State, Vars>,
+  ): this;
+  get<Path extends string>(path: Path, ...args: unknown[]): this {
+    return this.#routeWithVerb("GET", path, args);
   }
 
   post<Path extends string>(
     path: Path,
+    handler: Handler<Path, State, Vars>,
+  ): this;
+  post<Path extends string>(
+    path: Path,
     ...handlers: [
       ...RouteMiddleware<Path, State, Vars>[],
-      Handler<Path, State, Vars>,
+      Handler<
+        Path,
+        State,
+        Vars
+      >,
     ]
-  ): this {
-    const routeMws = handlers.slice(
-      0,
-      -1,
-    ) as RouteMiddleware<Path, State, Vars>[];
-    const h = handlers[handlers.length - 1] as Handler<Path, State, Vars>;
-    return this.#add("POST", path, routeMws, h);
+  ): this;
+  post<Path extends string>(
+    path: Path,
+    config: RouteConfig,
+    handler: Handler<Path, State, Vars>,
+  ): this;
+  post<Path extends string>(path: Path, ...args: unknown[]): this {
+    return this.#routeWithVerb("POST", path, args);
   }
 
   put<Path extends string>(
     path: Path,
+    handler: Handler<Path, State, Vars>,
+  ): this;
+  put<Path extends string>(
+    path: Path,
     ...handlers: [
       ...RouteMiddleware<Path, State, Vars>[],
-      Handler<Path, State, Vars>,
+      Handler<
+        Path,
+        State,
+        Vars
+      >,
     ]
-  ): this {
-    const routeMws = handlers.slice(
-      0,
-      -1,
-    ) as RouteMiddleware<Path, State, Vars>[];
-    const h = handlers[handlers.length - 1] as Handler<Path, State, Vars>;
-    return this.#add("PUT", path, routeMws, h);
+  ): this;
+  put<Path extends string>(
+    path: Path,
+    config: RouteConfig,
+    handler: Handler<Path, State, Vars>,
+  ): this;
+  put<Path extends string>(path: Path, ...args: unknown[]): this {
+    return this.#routeWithVerb("PUT", path, args);
   }
 
   patch<Path extends string>(
     path: Path,
+    handler: Handler<Path, State, Vars>,
+  ): this;
+  patch<Path extends string>(
+    path: Path,
     ...handlers: [
       ...RouteMiddleware<Path, State, Vars>[],
-      Handler<Path, State, Vars>,
+      Handler<
+        Path,
+        State,
+        Vars
+      >,
     ]
-  ): this {
-    const routeMws = handlers.slice(
-      0,
-      -1,
-    ) as RouteMiddleware<Path, State, Vars>[];
-    const h = handlers[handlers.length - 1] as Handler<Path, State, Vars>;
-    return this.#add("PATCH", path, routeMws, h);
+  ): this;
+  patch<Path extends string>(
+    path: Path,
+    config: RouteConfig,
+    handler: Handler<Path, State, Vars>,
+  ): this;
+  patch<Path extends string>(path: Path, ...args: unknown[]): this {
+    return this.#routeWithVerb("PATCH", path, args);
   }
 
   delete<Path extends string>(
     path: Path,
+    handler: Handler<Path, State, Vars>,
+  ): this;
+  delete<Path extends string>(
+    path: Path,
     ...handlers: [
       ...RouteMiddleware<Path, State, Vars>[],
-      Handler<Path, State, Vars>,
+      Handler<
+        Path,
+        State,
+        Vars
+      >,
     ]
-  ): this {
-    const routeMws = handlers.slice(
-      0,
-      -1,
-    ) as RouteMiddleware<Path, State, Vars>[];
-    const h = handlers[handlers.length - 1] as Handler<Path, State, Vars>;
-    return this.#add("DELETE", path, routeMws, h);
+  ): this;
+  delete<Path extends string>(
+    path: Path,
+    config: RouteConfig,
+    handler: Handler<Path, State, Vars>,
+  ): this;
+  delete<Path extends string>(path: Path, ...args: unknown[]): this {
+    return this.#routeWithVerb("DELETE", path, args);
   }
 
   all<Path extends string>(
     path: Path,
+    handler: Handler<Path, State, Vars>,
+  ): this;
+  all<Path extends string>(
+    path: Path,
     ...handlers: [
       ...RouteMiddleware<Path, State, Vars>[],
-      Handler<Path, State, Vars>,
+      Handler<
+        Path,
+        State,
+        Vars
+      >,
     ]
-  ): this {
-    const routeMws = handlers.slice(
-      0,
-      -1,
-    ) as RouteMiddleware<Path, State, Vars>[];
-    const h = handlers[handlers.length - 1] as Handler<Path, State, Vars>;
-    this.#add("GET", path, routeMws, h);
-    this.#add("POST", path, routeMws, h);
-    this.#add("PUT", path, routeMws, h);
-    this.#add("PATCH", path, routeMws, h);
-    this.#add("DELETE", path, routeMws, h);
-    this.#add("OPTIONS", path, routeMws, h);
-    this.#add("HEAD", path, routeMws, h);
+  ): this;
+  all<Path extends string>(
+    path: Path,
+    config: RouteConfig,
+    handler: Handler<Path, State, Vars>,
+  ): this;
+  all<Path extends string>(path: Path, ...args: unknown[]): this {
+    const methods: HttpMethod[] = [
+      "GET",
+      "POST",
+      "PUT",
+      "PATCH",
+      "DELETE",
+      "OPTIONS",
+      "HEAD",
+    ];
+    for (const m of methods) {
+      this.#routeWithVerb(m, path, args);
+    }
     return this;
   }
 
@@ -780,43 +947,17 @@ export class Application<
     return this;
   }
 
-  // Simple schema-aware helpers for JSON body routes.
-  postJson<Path extends string, Body>(
-    path: Path,
-    schema: SchemaLike<Body>,
-    handler: (
-      c: HandlerCtx<Path, State, Vars>,
-      body: Body,
-    ) => Response | Promise<Response>,
-    ...mws: RouteMiddleware<Path, State, Vars>[]
-  ): this {
-    return this.post(
-      path,
-      ...mws,
-      async (c) => {
-        const body = await c.readJsonWith(schema);
-        return handler(c, body);
-      },
-    );
-  }
-
-  putJson<Path extends string, Body>(
-    path: Path,
-    schema: SchemaLike<Body>,
-    handler: (
-      c: HandlerCtx<Path, State, Vars>,
-      body: Body,
-    ) => Response | Promise<Response>,
-    ...mws: RouteMiddleware<Path, State, Vars>[]
-  ): this {
-    return this.put(
-      path,
-      ...mws,
-      async (c) => {
-        const body = await c.readJsonWith(schema);
-        return handler(c, body);
-      },
-    );
+  /**
+   * Introspect all registered routes (method, path, keys, meta, schemas).
+   */
+  routes(): RouteInfo[] {
+    return this.#routes.map((r) => ({
+      method: r.method,
+      path: r.template,
+      keys: [...r.keys],
+      meta: r.meta,
+      schemas: r.schemas,
+    }));
   }
 
   async fetch(req: Request): Promise<Response> {
@@ -855,16 +996,16 @@ export class Application<
       const allow = this.#allowList(path);
       if (allow) return Promise.resolve(methodNotAllowed(path, allow));
 
-      if (this.#onNotFound) {
-        const ctx = this.#ctx<string>(
+      if (this.#notFoundHandler) {
+        const ctx = this.#ctx(
           req,
           url,
-          params,
+          {} as AnyParams,
           state,
           vars,
           requestId,
-        );
-        return Promise.resolve(this.#onNotFound(ctx));
+        ) as HandlerCtx<string, State, Vars>;
+        return Promise.resolve(this.#notFoundHandler(ctx));
       }
 
       return Promise.resolve(
@@ -874,7 +1015,7 @@ export class Application<
 
     const run = (i: number): Promise<Response> => {
       if (i >= mw.length) return dispatch();
-      const ctx = this.#ctx<string>(
+      const ctx = this.#ctx(
         req,
         url,
         params,
@@ -889,16 +1030,20 @@ export class Application<
     try {
       return await run(0);
     } catch (err) {
-      if (this.#onError) {
-        const ctx = this.#ctx<string>(
+      if (this.#onErrorHandler) {
+        const ctx = this.#ctx(
           req,
           url,
           params,
           state,
           vars,
           requestId,
-        );
-        return await this.#onError(err, ctx);
+        ) as HandlerCtx<string, State, Vars>;
+        try {
+          return await this.#onErrorHandler(err, ctx);
+        } catch {
+          return textResponse("Internal Server Error", 500);
+        }
       }
       throw err;
     }
@@ -919,7 +1064,7 @@ export class Application<
   #match(
     method: HttpMethod,
     path: string,
-  ): { route: CompiledRoute<State, Vars>; params: AnyParams } | null {
+  ): { route: InternalRoute<State, Vars>; params: AnyParams } | null {
     for (const r of this.#routes) {
       if (r.method !== method) continue;
       const m = path.match(r.re);
@@ -933,20 +1078,19 @@ export class Application<
     return null;
   }
 
-  #ctx<Path extends string>(
+  #ctx(
     req: Request,
     url: URL,
     params: AnyParams,
     state: State,
     vars: Vars,
     requestId: string,
-  ): HandlerCtx<Path, State, Vars> {
+  ): HandlerCtx<string, State, Vars> {
     const initWith = (init?: ResponseInit) => init ?? {};
-    const typedParams = params as ParamsOf<Path>;
     return {
       req,
       url,
-      params: typedParams,
+      params,
       state,
 
       vars,
@@ -994,7 +1138,7 @@ export class Application<
       sse: <E extends SseEventMap>(
         producer: (
           session: SseSession<E>,
-          c: HandlerCtx<Path, State, Vars>,
+          c: HandlerCtx<string, State, Vars>,
         ) => void | Promise<void>,
         opts?: Omit<SseOptions, "signal">,
       ) => {
@@ -1004,14 +1148,7 @@ export class Application<
             await session.ready;
             await producer(
               session,
-              this.#ctx<Path>(
-                req,
-                url,
-                params,
-                state,
-                vars,
-                requestId,
-              ),
+              this.#ctx(req, url, params, state, vars, requestId),
             );
           } catch (err) {
             const e = asError(err);
@@ -1024,15 +1161,50 @@ export class Application<
     };
   }
 
+  #routeWithVerb<Path extends string, M extends HttpMethod>(
+    method: M,
+    path: Path,
+    args: unknown[],
+  ): this {
+    if (args.length === 0) {
+      throw new Error(`${method}(${path}) requires a handler`);
+    }
+
+    const first = args[0];
+
+    // get(path, handler) or get(path, mw1, ..., handler)
+    if (typeof first === "function") {
+      const last = args[args.length - 1];
+      if (typeof last !== "function") {
+        throw new Error(
+          `${method}(${path}) requires a final handler function`,
+        );
+      }
+      const mws = args.slice(0, -1) as RouteMiddleware<Path, State, Vars>[];
+      const handler = last as Handler<Path, State, Vars>;
+      return this.#add(method, path, handler, undefined, mws);
+    }
+
+    // get(path, config, handler)
+    const config = first as RouteConfig;
+    if (args.length !== 2 || typeof args[1] !== "function") {
+      throw new Error(
+        `${method}(${path}) with config requires (config, handler)`,
+      );
+    }
+    const handler = args[1] as Handler<Path, State, Vars>;
+    return this.#add(method, path, handler, config, []);
+  }
+
   #add<M extends HttpMethod, Path extends string>(
     method: M,
     path: Path,
-    routeMws: RouteMiddleware<Path, State, Vars>[],
     h: Handler<Path, State, Vars>,
+    config?: RouteConfig,
+    routeMws?: RouteMiddleware<Path, State, Vars>[],
   ): this {
     const p = path.startsWith("/") ? path : `/${path}`;
     const { re, keys } = compilePath(p);
-    const composed = composeRoute(routeMws, h);
 
     const handler = async (
       req: Request,
@@ -1042,18 +1214,39 @@ export class Application<
       vars: Vars,
       requestId: string,
     ) => {
-      const ctx = this.#ctx<Path>(
+      const ctx = this.#ctx(
         req,
         url,
         params,
         state,
         vars,
         requestId,
-      );
-      return await composed(ctx);
+      ) as unknown as HandlerCtx<
+        Path,
+        State,
+        Vars
+      >;
+
+      const routeChain = async (i: number): Promise<Response> => {
+        if (!routeMws || i >= routeMws.length) {
+          return await h(ctx);
+        }
+        const mw = routeMws[i];
+        return await mw(ctx, () => routeChain(i + 1));
+      };
+
+      return await routeChain(0);
     };
 
-    this.#routes.push({ method, template: p, keys, re, handler });
+    this.#routes.push({
+      method,
+      template: p,
+      keys,
+      re,
+      handler,
+      meta: config?.meta,
+      schemas: config?.schemas,
+    });
     return this;
   }
 }
@@ -1067,159 +1260,45 @@ export class RouteBuilder<
 
   get<Path extends string>(
     path: Path,
-    ...handlers: [
-      ...RouteMiddleware<JoinPath<Base, Path>, State, Vars>[],
-      Handler<JoinPath<Base, Path>, State, Vars>,
-    ]
+    h: Handler<JoinPath<Base, Path>, State, Vars>,
   ): this {
     const full = withBase(this.base, path) as JoinPath<Base, Path>;
-    this.app.get(full, ...handlers);
+    this.app.get(full, h);
     return this;
   }
-
   post<Path extends string>(
     path: Path,
-    ...handlers: [
-      ...RouteMiddleware<JoinPath<Base, Path>, State, Vars>[],
-      Handler<JoinPath<Base, Path>, State, Vars>,
-    ]
+    h: Handler<JoinPath<Base, Path>, State, Vars>,
   ): this {
     const full = withBase(this.base, path) as JoinPath<Base, Path>;
-    this.app.post(full, ...handlers);
+    this.app.post(full, h);
     return this;
   }
-
   put<Path extends string>(
     path: Path,
-    ...handlers: [
-      ...RouteMiddleware<JoinPath<Base, Path>, State, Vars>[],
-      Handler<JoinPath<Base, Path>, State, Vars>,
-    ]
+    h: Handler<JoinPath<Base, Path>, State, Vars>,
   ): this {
     const full = withBase(this.base, path) as JoinPath<Base, Path>;
-    this.app.put(full, ...handlers);
+    this.app.put(full, h);
     return this;
   }
-
   patch<Path extends string>(
     path: Path,
-    ...handlers: [
-      ...RouteMiddleware<JoinPath<Base, Path>, State, Vars>[],
-      Handler<JoinPath<Base, Path>, State, Vars>,
-    ]
+    h: Handler<JoinPath<Base, Path>, State, Vars>,
   ): this {
     const full = withBase(this.base, path) as JoinPath<Base, Path>;
-    this.app.patch(full, ...handlers);
+    this.app.patch(full, h);
     return this;
   }
-
   delete<Path extends string>(
     path: Path,
-    ...handlers: [
-      ...RouteMiddleware<JoinPath<Base, Path>, State, Vars>[],
-      Handler<JoinPath<Base, Path>, State, Vars>,
-    ]
+    h: Handler<JoinPath<Base, Path>, State, Vars>,
   ): this {
     const full = withBase(this.base, path) as JoinPath<Base, Path>;
-    this.app.delete(full, ...handlers);
+    this.app.delete(full, h);
     return this;
   }
 }
-
-/* =========================
- * Simple built-in middleware
- * ========================= */
-
-// Basic request logger (method, path, status, ms, requestId).
-export const logger = <State, Vars extends VarsRecord>(): Middleware<
-  State,
-  Vars
-> =>
-async (c, next) => {
-  const start = performance.now();
-  const method = c.req.method;
-  const { pathname } = c.url;
-  try {
-    const res = await next();
-    const ms = (performance.now() - start).toFixed(1);
-    // eslint-disable-next-line no-console
-    console.log(
-      `[${c.requestId}] ${method} ${pathname} -> ${res.status} ${ms}ms`,
-    );
-    return res;
-  } catch (err) {
-    const ms = (performance.now() - start).toFixed(1);
-    // eslint-disable-next-line no-console
-    console.error(
-      `[${c.requestId}] ${method} ${pathname} ERROR ${ms}ms`,
-      err,
-    );
-    throw err;
-  }
-};
-
-// Attach x-request-id response header.
-export const requestIdHeader = <State, Vars extends VarsRecord>(): Middleware<
-  State,
-  Vars
-> =>
-async (c, next) => {
-  const res = await next();
-  const headers = new Headers(res.headers);
-  headers.set("x-request-id", c.requestId);
-  return new Response(res.body, {
-    status: res.status,
-    statusText: res.statusText,
-    headers,
-  });
-};
-
-export type SimpleCorsOptions = {
-  origin?: string; // default "*"
-  allowMethods?: HttpMethod[]; // default common methods
-  allowHeaders?: string[]; // default "*"
-};
-
-export const cors = <State, Vars extends VarsRecord>(
-  opts: SimpleCorsOptions = {},
-): Middleware<State, Vars> => {
-  const origin = opts.origin ?? "*";
-  const allowMethods = opts.allowMethods ?? [
-    "GET",
-    "HEAD",
-    "POST",
-    "PUT",
-    "PATCH",
-    "DELETE",
-    "OPTIONS",
-  ];
-  const allowHeaders = opts.allowHeaders ?? ["*"];
-
-  return async (c, next) => {
-    const reqMethod = c.req.method.toUpperCase();
-
-    const baseHeaders: HeadersInit = {
-      "access-control-allow-origin": origin,
-      "access-control-allow-methods": allowMethods.join(", "),
-      "access-control-allow-headers": allowHeaders.join(", "),
-    };
-
-    if (reqMethod === "OPTIONS") {
-      return textResponse("", 204, baseHeaders);
-    }
-
-    const res = await next();
-    const headers = new Headers(res.headers);
-    for (const [k, v] of Object.entries(baseHeaders)) {
-      headers.set(k, v);
-    }
-    return new Response(res.body, {
-      status: res.status,
-      statusText: res.statusText,
-      headers,
-    });
-  };
-};
 
 /* =========================
  * 404 helper (kept)
@@ -1251,4 +1330,201 @@ export const notFoundPureTsUi = (req: Request, hintRoutes: string[]) => {
   }
 
   return textResponse(`Not found: ${req.method} ${url.pathname}`, 404);
+};
+
+/* =========================
+ * Convenience helpers: JSON routes, CORS, request-id, logger
+ * ========================= */
+
+export const postJson = <
+  State extends Record<string, unknown>,
+  Vars extends VarsRecord,
+  Path extends string,
+  Body,
+>(
+  app: Application<State, Vars>,
+  path: Path,
+  schema: SchemaLike<Body>,
+  handler: (
+    c: HandlerCtx<Path, State, Vars>,
+    body: Body,
+  ) => Response | Promise<Response>,
+): void => {
+  app.post(path, async (c) => {
+    const body = await c.readJsonWith(schema);
+    return await handler(
+      c as unknown as HandlerCtx<Path, State, Vars>,
+      body,
+    );
+  });
+};
+
+export const putJson = <
+  State extends Record<string, unknown>,
+  Vars extends VarsRecord,
+  Path extends string,
+  Body,
+>(
+  app: Application<State, Vars>,
+  path: Path,
+  schema: SchemaLike<Body>,
+  handler: (
+    c: HandlerCtx<Path, State, Vars>,
+    body: Body,
+  ) => Response | Promise<Response>,
+): void => {
+  app.put(path, async (c) => {
+    const body = await c.readJsonWith(schema);
+    return await handler(
+      c as unknown as HandlerCtx<Path, State, Vars>,
+      body,
+    );
+  });
+};
+
+// If you prefer methods, you can use these wrappers:
+Application.prototype.postJson = function <
+  Path extends string,
+  Body,
+>(
+  this: Application<Any, Any>,
+  path: Path,
+  schema: SchemaLike<Body>,
+  handler: (
+    c: HandlerCtx<Path, Any, Any>,
+    body: Body,
+  ) => Response | Promise<Response>,
+): Application<Any, Any> {
+  postJson(this, path, schema, handler);
+  return this;
+} as Any;
+
+Application.prototype.putJson = function <
+  Path extends string,
+  Body,
+>(
+  this: Application<Any, Any>,
+  path: Path,
+  schema: SchemaLike<Body>,
+  handler: (
+    c: HandlerCtx<Path, Any, Any>,
+    body: Body,
+  ) => Response | Promise<Response>,
+): Application<Any, Any> {
+  putJson(this, path, schema, handler);
+  return this;
+} as Any;
+
+declare module "./http.ts" {
+  interface Application<State, Vars extends VarsRecord> {
+    postJson<
+      Path extends string,
+      Body,
+    >(
+      path: Path,
+      schema: SchemaLike<Body>,
+      handler: (
+        c: HandlerCtx<Path, State, Vars>,
+        body: Body,
+      ) => Response | Promise<Response>,
+    ): this;
+
+    putJson<
+      Path extends string,
+      Body,
+    >(
+      path: Path,
+      schema: SchemaLike<Body>,
+      handler: (
+        c: HandlerCtx<Path, State, Vars>,
+        body: Body,
+      ) => Response | Promise<Response>,
+    ): this;
+  }
+}
+
+export type CorsOptions = {
+  origin?: string;
+  methods?: HttpMethod[];
+  headers?: string[];
+  allowCredentials?: boolean;
+  maxAgeSeconds?: number;
+};
+
+export const cors = <State, Vars extends VarsRecord>(
+  opts: CorsOptions = {},
+): Middleware<State, Vars> =>
+async (c, next) => {
+  const origin = opts.origin ?? "*";
+  const methods = opts.methods ?? [
+    "GET",
+    "HEAD",
+    "POST",
+    "PUT",
+    "PATCH",
+    "DELETE",
+    "OPTIONS",
+  ];
+  const headers = opts.headers ?? ["Content-Type", "Authorization"];
+
+  if (c.req.method === "OPTIONS") {
+    const h = new Headers();
+    h.set("access-control-allow-origin", origin);
+    h.set("access-control-allow-methods", methods.join(", "));
+    h.set("access-control-allow-headers", headers.join(", "));
+    if (opts.allowCredentials) {
+      h.set("access-control-allow-credentials", "true");
+    }
+    if (opts.maxAgeSeconds != null) {
+      h.set("access-control-max-age", String(opts.maxAgeSeconds));
+    }
+    return new Response(null, { status: 204, headers: h });
+  }
+
+  const res = await next();
+  const h = new Headers(res.headers);
+  h.set("access-control-allow-origin", origin);
+  if (opts.allowCredentials) {
+    h.set("access-control-allow-credentials", "true");
+  }
+  return new Response(res.body, { status: res.status, headers: h });
+};
+
+export const requestIdHeader = <State, Vars extends VarsRecord>(): Middleware<
+  State,
+  Vars
+> =>
+async (c, next) => {
+  const res = await next();
+  const h = new Headers(res.headers);
+  h.set("x-request-id", c.requestId);
+  return new Response(res.body, { status: res.status, headers: h });
+};
+
+// Basic request logger (method, path, status, ms, requestId).
+export const logger = <State, Vars extends VarsRecord>(): Middleware<
+  State,
+  Vars
+> =>
+async (c, next) => {
+  const start = performance.now();
+  const method = c.req.method;
+  const { pathname } = c.url;
+  try {
+    const res = await next();
+    const ms = (performance.now() - start).toFixed(1);
+    // eslint-disable-next-line no-console
+    console.log(
+      `[${c.requestId}] ${method} ${pathname} -> ${res.status} ${ms}ms`,
+    );
+    return res;
+  } catch (err) {
+    const ms = (performance.now() - start).toFixed(1);
+    // eslint-disable-next-line no-console
+    console.error(
+      `[${c.requestId}] ${method} ${pathname} ERROR ${ms}ms`,
+      err,
+    );
+    throw err;
+  }
 };
