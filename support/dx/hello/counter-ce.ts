@@ -1,9 +1,9 @@
 #!/usr/bin/env -S deno run -A --watch --node-modules-dir=auto
 // support/dx/hello/counter-ce.ts
 /**
- * @module support/assurance/hello/counter-ce
+ * @module support/dx/hello/counter-ce
  *
- * Continuux “Hello World” (Counter) using Custom Elements as the primary
+ * ContinuUX “Hello World” (Counter) using Custom Elements as the primary
  * interactivity boundary.
  *
  * Stage 3 progression:
@@ -76,7 +76,7 @@ const pageHtml = (): string =>
           name: "viewport",
           content: "width=device-width, initial-scale=1",
         }),
-        H.title("Continuux Hello (Counter CE)"),
+        H.title("ContinuUX Hello (Counter CE)"),
         H.link({
           rel: "stylesheet",
           href: "https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css",
@@ -86,14 +86,17 @@ const pageHtml = (): string =>
         H.main(
           { class: "container", style: "max-width:720px; padding-top:2rem;" },
           H.hgroup(
-            H.h1("Continuux Hello"),
-            H.p("Counter app with Custom Element + SSE (no global browser UA)"),
+            H.h1("ContinuUX Hello"),
+            H.p("Counter app with Custom Element + SSE (no global UA)"),
           ),
           H.article(
             H.customElement("counter-ce")({
-              "data-sse-url": "/ce/sse",
-              "data-action-url": "/ce/action",
-              "data-with-credentials": "true",
+              // what CxAide expects
+              "data-cx-sse-url": "/ce/sse",
+              "data-cx-action-url": "/ce/action", // if CxAide uses action-url
+              "data-cx-post-url": "/ce/action", // if CxAide uses post-url (safe to include both)
+              "data-cx-sse-with-credentials": "true",
+
               style: "display:block;",
             }),
           ),
@@ -126,7 +129,7 @@ app.get("/counter-ce.js", async () => {
   const p = await Deno.realPath(fsPath("./counter-ce.js"));
   let js = await Deno.readTextFile(p);
 
-  // Rewrite ONLY what the browser can’t resolve.
+  // Rewrite ONLY what the browser can’t resolve (repo-relative -> served path).
   js = js.replace(
     "../../../lib/continuux/browser-ua-aide.js",
     "/.cx/browser-ua-aide.js",

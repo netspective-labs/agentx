@@ -54,10 +54,6 @@ const setDatasetJs = (k: string, v: string) =>
 }`;
 
 const pageHtml = (): string => {
-  const appAttrs: H.Attrs = H.attrs(
-    cx.html.sse({ url: "/cx/sse", withCredentials: true }),
-  );
-
   const boot = cx.html.bootModuleScriptTag({
     diagnostics: false,
     debug: false,
@@ -68,7 +64,6 @@ const pageHtml = (): string => {
   return H.render(
     H.doctype(),
     H.html(
-      appAttrs,
       H.head(
         H.meta({ charset: "utf-8" }),
         H.meta({
@@ -143,10 +138,11 @@ const pageHtml = (): string => {
 
 const app = Application.sharedState<State, Vars>(appState);
 
-app.get(
-  "/interaction-browser-ua.js",
-  () => cx.server.uaModuleResponse("no-store"),
-);
+// Serve the unified UA module at the URL used by the page boot script.
+app.get("/browser-ua-aide.js", async () => {
+  // createCx(...).server.uaModuleResponse now serves browser-ua-aide.js
+  return await cx.server.uaModuleResponse("no-store");
+});
 
 app.get(
   "/",

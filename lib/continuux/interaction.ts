@@ -277,9 +277,11 @@ export const decodeCxEnvelope = (env: unknown): CxInbound => {
   if (isPlainObject(env["key"])) out.key = env["key"] as CxKeyMeta;
   if (isPlainObject(env["input"])) out.input = env["input"] as CxInputMeta;
   if (isPlainObject(env["form"])) out.form = env["form"] as CxFormDataObject;
+
   if (isPlainObject(env["signals"])) {
     out.signals = env["signals"] as Record<string, unknown>;
   }
+
   if (isPlainObject(env["headers"])) {
     const h = env["headers"] as Record<string, unknown>;
     const headers: Record<string, string> = {};
@@ -338,6 +340,8 @@ export const cxRouter = <
 
       let data: unknown;
       try {
+        // NOTE: current routing keeps the existing semantics: schema parses the full env.
+        // If you later split payload vs envelope, update this line accordingly.
         data = parseWith(r.schema as unknown as SchemaLike<unknown>, env);
       } catch (err) {
         const e = asError(err);
@@ -444,19 +448,25 @@ export const sawDiag = (
  * ========================= */
 
 export type UserAgentAideConfig = {
-  defaultPostUrl?: string;
-  defaultSseUrl?: string;
+  attrPrefix?: string; // default "data-cx"
+  defaultPostUrl?: string; // default "/cx"
+  defaultSseUrl?: string; // default "/cx/sse"
+  defaultImportUrl?: string; // default "/browser-ua-aide.js"
 };
 
 export type UserAgentAide = {
   attrs: {
+    // interaction binding
     cx: string;
     on: (domEvent: CxDomEventName) => string;
     id: string;
     signals: string;
     headers: string;
-    sseUrl: string;
-    sseWithCredentials: string;
+
+    // delegated UA network bus overrides (root-level)
+    postUrl: string; // `${prefix}-post-url`
+    sseUrl: string; // `${prefix}-sse-url`
+    sseWithCredentials: string; // `${prefix}-sse-with-credentials`
   };
 
   moduleSource: () => Promise<string>;
@@ -466,33 +476,43 @@ export type UserAgentAide = {
     importUrl?: string;
     postUrl?: string;
     sseUrl?: string;
+    sseWithCredentials?: boolean;
     debug?: boolean;
     diagnostics?: boolean;
     autoConnect?: boolean;
+    appVersion?: string;
+    events?: readonly CxDomEventName[];
+    preventDefaultSubmit?: boolean;
+    sseJsEventName?: string;
+    attrPrefix?: string;
   }) => string;
 };
 
 export const userAgentAide = (
-  _cfg: UserAgentAideConfig = {},
+  cfg: UserAgentAideConfig = {},
 ): UserAgentAide => {
-  const prefix = "data-cx";
+  const prefix = cfg.attrPrefix ?? "data-cx";
 
   const attrs = {
+    // interaction binding (same semantics as before)
     cx: `${prefix}`,
     on: (domEvent: CxDomEventName) => `${prefix}-on-${domEvent}`,
     id: `${prefix}-id`,
     signals: `${prefix}-signals`,
     headers: `${prefix}-headers`,
+
+    // network bus overrides (now explicit in browser-ua-aide.js)
+    postUrl: `${prefix}-post-url`,
     sseUrl: `${prefix}-sse-url`,
     sseWithCredentials: `${prefix}-sse-with-credentials`,
-  };
+  } as const;
 
   const moduleSource = async (): Promise<string> => {
-    const resolved = import.meta.resolve("./interaction-browser-ua.js");
+    const resolved = import.meta.resolve("./browser-ua-aide.js");
     const res = await fetch(resolved);
     if (!res.ok) {
       throw new Error(
-        `Failed to load interaction-browser-ua.js (${res.status} ${res.statusText}) from ${resolved}`,
+        `Failed to load browser-ua-aide.js (${res.status} ${res.statusText}) from ${resolved}`,
       );
     }
     return await res.text();
@@ -514,27 +534,60 @@ export const userAgentAide = (
     importUrl?: string;
     postUrl?: string;
     sseUrl?: string;
+    sseWithCredentials?: boolean;
     debug?: boolean;
     diagnostics?: boolean;
     autoConnect?: boolean;
+    appVersion?: string;
+    events?: readonly CxDomEventName[];
+    preventDefaultSubmit?: boolean;
+    sseJsEventName?: string;
+    attrPrefix?: string;
   } = {}): string => {
-    const importUrl = opts.importUrl ?? "/interaction-browser-ua.js";
-    const postUrl = opts.postUrl ?? "/cx";
-    const sseUrl = opts.sseUrl ?? "/cx/sse";
+    const importUrl = opts.importUrl ?? cfg.defaultImportUrl ??
+      "/browser-ua-aide.js";
+    const postUrl = opts.postUrl ?? cfg.defaultPostUrl ?? "/cx";
+    const sseUrl = opts.sseUrl ?? cfg.defaultSseUrl ?? "/cx/sse";
+
     const debug = !!opts.debug;
     const diagnostics = !!opts.diagnostics;
     const autoConnect = opts.autoConnect ?? true;
 
-    return [
+    const lines: string[] = [
       `import { createCxUserAgent } from ${JSON.stringify(importUrl)};`,
       `window.CX = createCxUserAgent({`,
       `  postUrl: ${JSON.stringify(postUrl)},`,
       `  sseUrl: ${JSON.stringify(sseUrl)},`,
+      `  sseWithCredentials: ${
+        typeof opts.sseWithCredentials === "boolean"
+          ? String(opts.sseWithCredentials)
+          : "undefined"
+      },`,
       `  debug: ${String(debug)},`,
       `  diagnostics: ${String(diagnostics)},`,
       `  autoConnect: ${String(autoConnect)},`,
-      `});`,
-    ].join("\n");
+    ];
+
+    if (opts.attrPrefix) {
+      lines.push(`  attrPrefix: ${JSON.stringify(opts.attrPrefix)},`);
+    }
+    if (opts.sseJsEventName) {
+      lines.push(`  sseJsEventName: ${JSON.stringify(opts.sseJsEventName)},`);
+    }
+    if (opts.appVersion) {
+      lines.push(`  appVersion: ${JSON.stringify(opts.appVersion)},`);
+    }
+    if (opts.events && opts.events.length) {
+      lines.push(`  events: ${JSON.stringify(Array.from(opts.events))},`);
+    }
+    if (typeof opts.preventDefaultSubmit === "boolean") {
+      lines.push(
+        `  preventDefaultSubmit: ${String(opts.preventDefaultSubmit)},`,
+      );
+    }
+
+    lines.push(`});`);
+    return lines.join("\n");
   };
 
   return { attrs, moduleSource, moduleResponse, bootModuleSnippet };

@@ -84,6 +84,7 @@ import type {
   CxHandlerResult,
   CxInbound,
   SchemaLike,
+  UserAgentAide,
 } from "./interaction.ts";
 import { decodeCxEnvelope, userAgentAide } from "./interaction.ts";
 
@@ -167,12 +168,17 @@ const parseWith = <T>(
  * ========================= */
 
 export type CxHtmlConfig<Prefix extends string> = {
+  // action prefix (e.g. "action")
   prefix?: Prefix; // default "action"
+
+  // endpoints
   postUrl?: string; // default "/cx"
   sseUrl?: string; // default "/cx/sse"
-  importUrl?: string; // default "/interaction-browser-ua.js"
+  importUrl?: string; // default "/browser-ua-aide.js"
+
+  // UA behavior defaults
   sseWithCredentials?: boolean; // default true
-  attrPrefix?: string; // default "data-cx" (must match UA)
+  attrPrefix?: string; // default "data-cx" (must match browser UA default)
 };
 
 /**
@@ -201,6 +207,10 @@ export type CxKit<
       events?: readonly CxDomEventName[];
       preventDefaultSubmit?: boolean;
       sseJsEventName?: string;
+      attrPrefix?: string;
+      sseWithCredentials?: boolean;
+      postUrl?: string;
+      sseUrl?: string;
     }) => string;
 
     bootModuleScriptTag: (opts?: {
@@ -211,13 +221,18 @@ export type CxKit<
       events?: readonly CxDomEventName[];
       preventDefaultSubmit?: boolean;
       sseJsEventName?: string;
+      attrPrefix?: string;
+      sseWithCredentials?: boolean;
+      postUrl?: string;
+      sseUrl?: string;
       attrs?: Attrs;
     }) => RawHtml;
 
-    // Root-level overrides for the UA network bus
+    // Root-level overrides for the delegated UA network bus
     // (set on <html> or <body>, read by the UA).
-    sse: (opts?: {
-      url?: string;
+    bus: (opts?: {
+      postUrl?: string;
+      sseUrl?: string;
       withCredentials?: boolean;
     }) => Attrs;
 
@@ -290,13 +305,8 @@ export type CxKit<
 
   // Server-side helpers: decode + dispatch + SSE hub
   server: {
-    // Serve /interaction-browser-ua.js with correct content-type.
     uaModuleResponse: (cacheControl?: string) => Promise<Response>;
 
-    // Decode + validate the inbound request body, ensuring spec matches
-    // one of your registered actions, then call the matching handler.
-    //
-    // You can use this directly inside your POST /cx route.
     dispatchFromRequestJson: (
       req: Request,
       body: unknown,
@@ -306,11 +316,8 @@ export type CxKit<
       opts?: { sse?: CxSseHub<SseOut> },
     ) => Promise<CxHandlerResult>;
 
-    // Convenience: convert a CxHandlerResult into a Response.
-    // (204 by default on ok)
     toResponse: (r: CxHandlerResult) => Response;
 
-    // Create an SSE hub you can share between routes.
     sseHub: () => CxSseHub<SseOut>;
   };
 };
@@ -320,21 +327,12 @@ export type CxKit<
  * ========================= */
 
 export type CxSseHub<E extends SseEventMap> = {
-  // Register a session under a sessionId (from query param or envelope).
-  // You call this from GET /cx/sse.
   register: (sessionId: string, session: SseSession<E>) => void;
-
-  // Remove a session id (usually called automatically on close).
   unregister: (sessionId: string) => void;
 
-  // Send to exactly one session (returns false if missing/closed).
   send: <K extends keyof E>(sessionId: string, event: K, data: E[K]) => boolean;
-
-  // Broadcast to all sessions (best effort).
   broadcast: <K extends keyof E>(event: K, data: E[K]) => void;
 
-  // Utilities for "js" event if you include it in your event map.
-  // You decide whether to include "js" in E.
   js: (sessionId: string, jsText: string) => boolean;
   broadcastJs: (jsText: string) => void;
 
@@ -369,7 +367,6 @@ const createSseHub = <E extends SseEventMap>(): CxSseHub<E> => {
   const register = (sessionId: string, session: SseSession<E>) => {
     const sid = normalizeSessionId(sessionId);
     if (!sid) {
-      // Don’t register under a bogus key; that guarantees “send” will miss.
       try {
         session.close();
       } catch {
@@ -378,7 +375,6 @@ const createSseHub = <E extends SseEventMap>(): CxSseHub<E> => {
       return;
     }
 
-    // Replace existing session for the same sid.
     unregister(sid);
     sessions.set(sid, session);
 
@@ -413,11 +409,11 @@ const createSseHub = <E extends SseEventMap>(): CxSseHub<E> => {
   };
 
   const js = (sessionId: string, jsText: string) =>
-    // @ts-expect-error: only works if E includes "js"
+    // @ts-expect-error: only valid if E includes "js"
     send(sessionId, "js", jsText);
 
   const broadcastJs = (jsText: string) =>
-    // @ts-expect-error: only works if E includes "js"
+    // @ts-expect-error: only valid if E includes "js"
     broadcast("js", jsText);
 
   return {
@@ -445,28 +441,24 @@ export const createCx = <
   schemas: Schemas,
   cfg: CxHtmlConfig<Prefix> = {},
 ): CxKit<State, Vars, Schemas, SseOut, Prefix> => {
-  const aide = userAgentAide();
+  const aide: UserAgentAide = userAgentAide({
+    attrPrefix: cfg.attrPrefix ?? "data-cx",
+    defaultPostUrl: cfg.postUrl ?? "/cx",
+    defaultSseUrl: cfg.sseUrl ?? "/cx/sse",
+    defaultImportUrl: cfg.importUrl ?? "/browser-ua-aide.js",
+  });
 
   const config: Required<CxHtmlConfig<Prefix>> = {
     prefix: (cfg.prefix ?? "action") as Prefix,
     postUrl: cfg.postUrl ?? "/cx",
     sseUrl: cfg.sseUrl ?? "/cx/sse",
-    importUrl: cfg.importUrl ?? "/interaction-browser-ua.js",
+    importUrl: cfg.importUrl ?? "/browser-ua-aide.js",
     sseWithCredentials: cfg.sseWithCredentials ?? true,
     attrPrefix: cfg.attrPrefix ?? "data-cx",
   };
 
-  // UA attribute names (strings) are centralized here.
-  // Nobody else should need to type them in app code.
-  const attr = {
-    cx: `${config.attrPrefix}`,
-    on: (domEvent: CxDomEventName) => `${config.attrPrefix}-on-${domEvent}`,
-    id: `${config.attrPrefix}-id`,
-    signals: `${config.attrPrefix}-signals`,
-    headers: `${config.attrPrefix}-headers`,
-    sseUrl: `${config.attrPrefix}-sse-url`,
-    sseWithCredentials: `${config.attrPrefix}-sse-with-credentials`,
-  } as const;
+  // Canonical attribute names from interaction.ts (single source of truth).
+  const attr = aide.attrs;
 
   const spec = <K extends keyof Schemas & string>(
     name: K,
@@ -507,43 +499,33 @@ export const createCx = <
       events?: readonly CxDomEventName[];
       preventDefaultSubmit?: boolean;
       sseJsEventName?: string;
+      attrPrefix?: string;
+      sseWithCredentials?: boolean;
+      postUrl?: string;
+      sseUrl?: string;
     } = {}): string => {
-      // We intentionally do not expose any raw string endpoints to callers.
-      // They can override via opts, but defaults come from config.
-      const importUrl = config.importUrl;
-      const postUrl = config.postUrl;
-      const sseUrl = config.sseUrl;
+      // Delegate to interaction.ts aide for consistent boot snippet.
+      // Then optionally layer in additional keys your browser UA supports.
+      //
+      // (We keep this “boring”: you can always override by writing your own module.)
+      const base = aide.bootModuleSnippet({
+        importUrl: config.importUrl,
+        postUrl: opts.postUrl ?? config.postUrl,
+        sseUrl: opts.sseUrl ?? config.sseUrl,
+        sseWithCredentials: typeof opts.sseWithCredentials === "boolean"
+          ? opts.sseWithCredentials
+          : config.sseWithCredentials,
+        debug: !!opts.debug,
+        diagnostics: !!opts.diagnostics,
+        autoConnect: opts.autoConnect ?? true,
+        appVersion: opts.appVersion,
+        events: opts.events,
+        preventDefaultSubmit: opts.preventDefaultSubmit,
+        sseJsEventName: opts.sseJsEventName,
+        attrPrefix: opts.attrPrefix ?? config.attrPrefix,
+      });
 
-      // The browser module accepts additional knobs beyond userAgentAide.bootModuleSnippet.
-      // We generate a minimal init but allow passing config keys that the UA supports.
-      const lines: string[] = [
-        `import { createCxUserAgent } from ${JSON.stringify(importUrl)};`,
-        `window.CX = createCxUserAgent({`,
-        `  postUrl: ${JSON.stringify(postUrl)},`,
-        `  sseUrl: ${JSON.stringify(sseUrl)},`,
-        `  sseWithCredentials: ${String(config.sseWithCredentials)},`,
-        `  debug: ${String(!!opts.debug)},`,
-        `  diagnostics: ${String(!!opts.diagnostics)},`,
-        `  autoConnect: ${String(opts.autoConnect ?? true)},`,
-      ];
-
-      if (opts.appVersion) {
-        lines.push(`  appVersion: ${safeJson(opts.appVersion)},`);
-      }
-      if (opts.events && opts.events.length) {
-        lines.push(`  events: ${safeJson(Array.from(opts.events))},`);
-      }
-      if (typeof opts.preventDefaultSubmit === "boolean") {
-        lines.push(
-          `  preventDefaultSubmit: ${String(opts.preventDefaultSubmit)},`,
-        );
-      }
-      if (opts.sseJsEventName) {
-        lines.push(`  sseJsEventName: ${safeJson(opts.sseJsEventName)},`);
-      }
-
-      lines.push(`});`);
-      return lines.join("\n");
+      return base;
     },
 
     bootModuleScriptTag: (opts: {
@@ -554,6 +536,10 @@ export const createCx = <
       events?: readonly CxDomEventName[];
       preventDefaultSubmit?: boolean;
       sseJsEventName?: string;
+      attrPrefix?: string;
+      sseWithCredentials?: boolean;
+      postUrl?: string;
+      sseUrl?: string;
       attrs?: Attrs;
     } = {}): RawHtml => {
       const code = html.bootModuleCode(opts);
@@ -563,9 +549,15 @@ export const createCx = <
       );
     },
 
-    sse: (opts?: { url?: string; withCredentials?: boolean }): Attrs => {
+    // Root-level bus overrides (read by browser-ua-aide.js from <html>/<body>)
+    bus: (opts?: {
+      postUrl?: string;
+      sseUrl?: string;
+      withCredentials?: boolean;
+    }): Attrs => {
       const out: Attrs = {};
-      if (opts?.url) out[attr.sseUrl] = opts.url;
+      if (opts?.postUrl) out[attr.postUrl] = opts.postUrl;
+      if (opts?.sseUrl) out[attr.sseUrl] = opts.sseUrl;
       if (typeof opts?.withCredentials === "boolean") {
         out[attr.sseWithCredentials] = opts.withCredentials ? "true" : "false";
       }
@@ -634,7 +626,6 @@ export const createCx = <
 
   const server = {
     uaModuleResponse: async (cacheControl = "no-store"): Promise<Response> => {
-      // Delegates to interaction.ts userAgentAide() which reads from disk.
       return await aide.moduleResponse(cacheControl);
     },
 
@@ -665,16 +656,16 @@ export const createCx = <
         };
       }
 
-      const [prefix, name] = sp.split(":", 2);
-      if (prefix !== config.prefix) {
+      const [pfx, nm] = sp.split(":", 2);
+      if (pfx !== config.prefix) {
         return {
           ok: false,
           status: 400,
-          message: `unsupported cx prefix: ${prefix}`,
+          message: `unsupported cx prefix: ${pfx}`,
         };
       }
 
-      const actionName = name as keyof Schemas & string;
+      const actionName = nm as keyof Schemas & string;
       const schema = (schemas as Record<string, unknown>)[actionName];
       const handler = (handlers as Record<string, unknown>)[actionName];
 
@@ -688,6 +679,7 @@ export const createCx = <
 
       let data: unknown;
       try {
+        // Keep legacy semantics: schema parses the full inbound env.
         data = parseWith(schema as never, body);
       } catch (err) {
         const msg = String(
@@ -715,7 +707,6 @@ export const createCx = <
         },
         js: (jsText: string) => {
           if (!hub) return false;
-          // requires SseOut to include "js"
           return hub.js(sessionId, jsText);
         },
       } as const;
@@ -768,35 +759,15 @@ export const createCx = <
 
 /* =========================
  * Convenience: defineSchemas()
- * =========================
- *
- * This helper improves ergonomics and keeps object keys literal.
- * Example:
- *   const schemas = defineSchemas({
- *     ping: (u) => u, // or zod schema
- *     save: z.object({ id: z.string() })
- *   });
- */
+ * ========================= */
+
 export const defineSchemas = <S extends CxActionSchemas>(schemas: S): S =>
   schemas;
 
 /* =========================
  * Convenience: cxPostHandler()
- * =========================
- *
- * If you want a single function to plug into POST /cx:
- *
- *   const cx = createCx<State, Vars>(schemas);
- *   app.post("/cx", async (c) => {
- *     const body = await c.readJson();
- *     const r = await cxPostHandler(cx, {
- *       req: c.req, body, state: c.state, vars: c.vars,
- *       handlers,
- *       sse,
- *     });
- *     return cx.server.toResponse(r);
- *   });
- */
+ * ========================= */
+
 export const cxPostHandler = async <
   State,
   Vars extends Record<string, unknown>,
@@ -825,21 +796,8 @@ export const cxPostHandler = async <
 
 /* =========================
  * Convenience: cxSseRegister()
- * =========================
- *
- * Intended for GET /cx/sse route handler.
- *
- * The UA always appends ?sessionId=... to the SSE URL.
- * If you follow the defaults, you can do:
- *
- *   app.get("/cx/sse", (c) =>
- *     c.sse<SseEvents>(async (session) => {
- *       const sid = c.query("sessionId") ?? "unknown";
- *       cxSseRegister(sseHub, sid, session);
- *       session.send("message", "ready");
- *     })
- *   );
- */
+ * ========================= */
+
 export const cxSseRegister = <E extends SseEventMap>(
   hub: CxSseHub<E>,
   sessionId: string,
@@ -848,7 +806,6 @@ export const cxSseRegister = <E extends SseEventMap>(
   const sid = (sessionId ?? "").trim();
 
   if (!sid || sid === "unknown") {
-    // Don’t keep a session that can never be addressed.
     try {
       session.close();
     } catch {
@@ -868,16 +825,12 @@ export const cxSseRegister = <E extends SseEventMap>(
 
 /* =========================
  * OPTIONAL: stricter header/signals helpers
- * =========================
- *
- * These are small type-safe builders that prevent accidental non-objects.
- */
+ * ========================= */
 
 export const cxSignals = (obj: Record<string, unknown>): Attrs => {
   if (!isPlainObject(obj)) {
     throw new Error("cxSignals expects a plain object");
   }
-  // This helper is intentionally generic; prefer cx.html.signals(...) in app code.
   return { "data-cx-signals": safeJson(obj) };
 };
 

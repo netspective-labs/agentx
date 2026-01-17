@@ -71,7 +71,7 @@ Deno.test("continuux: interaction e2e", async (t) => {
       fail(
         [
           "Missing required local file:",
-          "lib/continuux/interaction-browser-ua.js",
+          "lib/continuux/browser-ua-aide.js",
           `Details: ${String(err)}`,
         ].join("\n"),
       );
@@ -84,8 +84,9 @@ Deno.test("continuux: interaction e2e", async (t) => {
   const posts: CxInbound[] = [];
 
   const app = Application.sharedState({});
+
   app.get(
-    "/interaction-browser-ua.js",
+    "/browser-ua-aide.js",
     async () => await aide.moduleResponse("no-store"),
   );
 
@@ -184,12 +185,12 @@ Deno.test("continuux: interaction e2e", async (t) => {
 
   try {
     await t.step("Server serves UA module endpoint", async () => {
-      const modResp = await fetch(`${origin}/interaction-browser-ua.js`);
+      const modResp = await fetch(`${origin}/browser-ua-aide.js`);
       try {
         if (!modResp.ok) {
           const body = await modResp.text().catch(() => "");
           fail(
-            `Server did not serve /interaction-browser-ua.js: ${modResp.status} ${modResp.statusText}\n${body}`,
+            `Server did not serve /browser-ua-aide.js: ${modResp.status} ${modResp.statusText}\n${body}`,
           );
         }
         await modResp.arrayBuffer();
@@ -213,7 +214,7 @@ Deno.test("continuux: interaction e2e", async (t) => {
         (async () => {
           try {
             const mod = await import(${
-        JSON.stringify(`${origin}/interaction-browser-ua.js`)
+        JSON.stringify(`${origin}/browser-ua-aide.js`)
       });
             const fn =
               (mod && (mod.createCxUserAgent || mod.default)) ||
@@ -227,6 +228,7 @@ Deno.test("continuux: interaction e2e", async (t) => {
               autoConnect: true,
               debug: false,
               diagnostics: true,
+              preventDefaultSubmit: true,
             });
             return null;
           } catch (e) {

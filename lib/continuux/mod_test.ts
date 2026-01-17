@@ -19,6 +19,7 @@ import {
   formatCxDiagnosticsDump,
   parseCxDiagLine,
   sawDiag,
+  userAgentAide,
 } from "./interaction.ts";
 
 import {
@@ -29,19 +30,17 @@ import {
 } from "./interaction-html.ts";
 
 import {
-  type Attrs,
-  attrs as mergeAttrs,
   body,
   button,
   div,
   doctype,
   head,
   html,
+  javaScript,
   meta,
   render,
   script,
   title,
-  trustedRaw,
 } from "../universal/fluent-html.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -62,10 +61,6 @@ async function waitUntil(
 type BrowserSnapshot = {
   pageReady: unknown;
   sseReady: unknown;
-  execHook: unknown;
-  execCount: unknown;
-  lastJsLen: unknown;
-  lastJsPrefix: unknown;
   fromServer: unknown;
   lastFromServer: unknown;
   datasetLastSpec: unknown;
@@ -74,9 +69,9 @@ type BrowserSnapshot = {
   statusText: unknown;
 };
 
-Deno.test("continuux: counter e2e (html.ts + interaction-html.ts)", async (t) => {
+Deno.test("continuux: counter e2e (interaction-html.ts + browser-ua-aide.js)", async (t) => {
   type State = { count: number };
-  const appState: State = { count: 0 }; // canonical shared state for this test
+  const appState: State = { count: 0 };
 
   type Vars = Record<string, never>;
 
@@ -111,7 +106,6 @@ Deno.test("continuux: counter e2e (html.ts + interaction-html.ts)", async (t) =>
   const sendsMsg: SendMsg[] = [];
 
   const setTextJs = (id: string, text: string) => {
-    // IMPORTANT: never assign through optional chaining; it's a SyntaxError.
     return `{
       const __el = document.getElementById(${JSON.stringify(id)});
       if (__el) __el.textContent = ${JSON.stringify(text)};
@@ -127,49 +121,26 @@ Deno.test("continuux: counter e2e (html.ts + interaction-html.ts)", async (t) =>
   };
 
   const fixtureHtml = (): string => {
-    const appAttrs: Attrs = mergeAttrs(
-      cx.html.sse({ url: "/cx/sse", withCredentials: true }),
-    );
-
-    const boot = cx.html.bootModuleScriptTag({
-      diagnostics: true,
-      debug: false,
-      autoConnect: true,
-      attrs: { id: "cxBoot" },
-    });
-
-    const execHook = script(
-      { type: "module", id: "cxExecHook" },
-      trustedRaw(`
-        (async () => {
-          const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-          for (let i = 0; i < 400; i++) {
-            if (window.CX && typeof window.CX.exec === "function") break;
-            await sleep(10);
-          }
-          if (!window.CX || typeof window.CX.exec !== "function") {
-            window.__cx_exec_hook = "missing";
-            return;
-          }
-          window.__cx_exec_hook = "ok";
-          const orig = window.CX.exec.bind(window.CX);
-          window.__cx_exec_count = 0;
-          window.__cx_last_js = "";
-          window.CX.exec = (jsText) => {
-            try {
-              window.__cx_exec_count++;
-              window.__cx_last_js = String(jsText ?? "");
-            } catch {}
-            return orig(jsText);
-          };
-        })();
-      `),
+    // Developer-style boot: import one module and call createCxUserAgent.
+    const boot = script(
+      { type: "module", id: "cxBoot" },
+      javaScript`
+        import { createCxUserAgent } from "/browser-ua-aide.js";
+        window.__ua = createCxUserAgent({
+          postUrl: "/cx",
+          sseUrl: "/cx/sse",
+          autoConnect: true,
+          diagnostics: true,
+          debug: false,
+          preventDefaultSubmit: true,
+        });
+        window.__page_ready = "ok";
+      `,
     );
 
     return render(
       doctype(),
       html(
-        appAttrs,
         head(
           meta({ charset: "utf-8" }),
           title("ContinuUX Counter Test"),
@@ -182,19 +153,18 @@ Deno.test("continuux: counter e2e (html.ts + interaction-html.ts)", async (t) =>
             div({ id: "status" }, ""),
           ]),
           boot,
-          execHook,
-          script({ type: "module" }, trustedRaw(`window.__page_ready = "ok";`)),
         ),
       ),
     );
   };
 
-  // Make the state semantics explicit: shared mutable state across requests.
   const app = Application.sharedState<State, Vars>(appState);
 
-  app.get("/interaction-browser-ua.js", async () => {
-    return await cx.server.uaModuleResponse("no-store");
-  });
+  const aide = userAgentAide();
+  app.get(
+    "/browser-ua-aide.js",
+    async () => await aide.moduleResponse("no-store"),
+  );
 
   app.get("/__fixture__", () =>
     new Response(fixtureHtml(), {
@@ -213,14 +183,12 @@ Deno.test("continuux: counter e2e (html.ts + interaction-html.ts)", async (t) =>
         sendsJs.push((js) => void session.sendWhenReady("js", js));
         sendsMsg.push((msg) => void session.sendWhenReady("message", msg));
 
-        sseSends.push(
-          {
-            kind: "handshake",
-            event: "js",
-            ts: Date.now(),
-            note: "ready-flag",
-          },
-        );
+        sseSends.push({
+          kind: "handshake",
+          event: "js",
+          ts: Date.now(),
+          note: "ready-flag",
+        });
         await session.sendWhenReady("js", `window.__cx_sse_ready = "ok";`);
 
         sseSends.push({
@@ -289,7 +257,6 @@ Deno.test("continuux: counter e2e (html.ts + interaction-html.ts)", async (t) =>
           for (const send of sendsMsg) send(`count=${appState.count}`);
           for (const send of sendsJs) send(js);
 
-          // Also exercise hub.send directly (typed).
           hub.send(sessionId, "message", `count=${appState.count}`);
 
           return { ok: true };
@@ -323,7 +290,6 @@ Deno.test("continuux: counter e2e (html.ts + interaction-html.ts)", async (t) =>
           for (const send of sendsMsg) send("count=0");
           for (const send of sendsJs) send(js);
 
-          // Also exercise hub.send directly (typed).
           hub.send(sessionId, "message", "count=0");
 
           return { ok: true };
@@ -354,18 +320,12 @@ Deno.test("continuux: counter e2e (html.ts + interaction-html.ts)", async (t) =>
   const snapshot = async (): Promise<BrowserSnapshot> => {
     const snap = await page.evaluate(`
       (() => {
-        const lastJs = globalThis.__cx_last_js;
-        const prefix = (typeof lastJs === "string") ? lastJs.slice(0, 220) : "";
         const qs = (id) => {
           try { return document.getElementById(id)?.textContent ?? null; } catch { return null; }
         };
         return {
           pageReady: globalThis.__page_ready ?? null,
           sseReady: globalThis.__cx_sse_ready ?? null,
-          execHook: globalThis.__cx_exec_hook ?? null,
-          execCount: globalThis.__cx_exec_count ?? null,
-          lastJsLen: (typeof lastJs === "string") ? lastJs.length : 0,
-          lastJsPrefix: prefix,
           fromServer: globalThis.__cx_from_server ?? null,
           lastFromServer: globalThis.__cx_last_from_server ?? null,
           datasetLastSpec: document?.body?.dataset?.lastSpec ?? null,
@@ -416,13 +376,13 @@ Deno.test("continuux: counter e2e (html.ts + interaction-html.ts)", async (t) =>
   });
 
   try {
-    await t.step("Server serves UA module endpoint", async () => {
-      const modResp = await fetch(`${origin}/interaction-browser-ua.js`);
+    await t.step("Server serves browser UA module endpoint", async () => {
+      const modResp = await fetch(`${origin}/browser-ua-aide.js`);
       try {
         if (!modResp.ok) {
           const body = await modResp.text().catch(() => "");
           fail(
-            `Server did not serve /interaction-browser-ua.js: ${modResp.status} ${modResp.statusText}\n${body}`,
+            `Server did not serve /browser-ua-aide.js: ${modResp.status} ${modResp.statusText}\n${body}`,
           );
         }
         await modResp.arrayBuffer();
@@ -441,7 +401,7 @@ Deno.test("continuux: counter e2e (html.ts + interaction-html.ts)", async (t) =>
       });
     });
 
-    await t.step("Page module script executed", async () => {
+    await t.step("Page boot executed", async () => {
       await page.waitForFunction('window.__page_ready === "ok"', undefined, {
         timeout: 10_000,
       });
@@ -456,12 +416,6 @@ Deno.test("continuux: counter e2e (html.ts + interaction-html.ts)", async (t) =>
 
     await t.step("SSE handshake executed in browser", async () => {
       await page.waitForFunction('window.__cx_sse_ready === "ok"', undefined, {
-        timeout: 10_000,
-      });
-    });
-
-    await t.step("UA exec hook installed", async () => {
-      await page.waitForFunction('window.__cx_exec_hook === "ok"', undefined, {
         timeout: 10_000,
       });
     });
@@ -486,9 +440,7 @@ Deno.test("continuux: counter e2e (html.ts + interaction-html.ts)", async (t) =>
       await page.waitForFunction(
         'document.body.dataset.lastCount === "1"',
         undefined,
-        {
-          timeout: 10_000,
-        },
+        { timeout: 10_000 },
       );
 
       assertEquals(await page.textContent("#count"), "1");
@@ -507,9 +459,7 @@ Deno.test("continuux: counter e2e (html.ts + interaction-html.ts)", async (t) =>
       await page.waitForFunction(
         'document.body.dataset.lastCount === "3"',
         undefined,
-        {
-          timeout: 10_000,
-        },
+        { timeout: 10_000 },
       );
 
       assertEquals(await page.textContent("#count"), "3");
@@ -531,13 +481,11 @@ Deno.test("continuux: counter e2e (html.ts + interaction-html.ts)", async (t) =>
       await page.waitForFunction(
         'document.body.dataset.lastCount === "0"',
         undefined,
-        {
-          timeout: 10_000,
-        },
+        { timeout: 10_000 },
       );
 
       assertEquals(await page.textContent("#count"), "0");
-      assertEquals(appState.count, 0); // this now checks canonical state
+      assertEquals(appState.count, 0);
     });
 
     await t.step("Posts include typed specs", () => {
