@@ -502,8 +502,9 @@ Deno.test("semanticLayout(): dependencies", () => {
   assertEquals(
     Array.from(defaultPage.dependencies),
     [{
-      source: "lib/universal/fluent-ds-semantic.css",
+      source: import.meta.resolve("./fluent-ds-semantic.css"),
       mount: "/fluent-ds/semantic.css",
+      contentType: "text/css; charset=utf-8",
     }],
   );
 
@@ -526,6 +527,7 @@ Deno.test("semanticLayout(): dependencies", () => {
     [{
       source: "https://cdn.example.com/fluent.css",
       mount: "https://cdn.example.com/fluent.css",
+      contentType: "text/css; charset=utf-8",
     }],
   );
 });

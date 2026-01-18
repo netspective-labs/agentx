@@ -681,6 +681,8 @@ export interface LayoutInit<DS extends AnyDesignSystem = DefaultDesignSystem> {
 export interface LayoutDependency {
   source: string;
   mount: string;
+  contentType?: string;
+  headers?: HeadersInit;
 }
 
 export interface LayoutResult {
@@ -722,7 +724,7 @@ export function semanticLayout<
   const stylesheetSource = stylesheetHref.startsWith("http://") ||
       stylesheetHref.startsWith("https://")
     ? stylesheetHref
-    : "lib/universal/fluent-ds-semantic.css";
+    : import.meta.resolve("./fluent-ds-semantic.css");
 
   const parts = init.shell({
     header: ds.header,
@@ -762,7 +764,11 @@ export function semanticLayout<
       ),
     ),
     dependencies: [
-      { source: stylesheetSource, mount: stylesheetHref },
+      {
+        source: stylesheetSource,
+        mount: stylesheetHref,
+        contentType: "text/css; charset=utf-8",
+      },
     ],
   };
 }

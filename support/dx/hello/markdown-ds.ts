@@ -18,6 +18,7 @@
  *   http://127.0.0.1:8000
  */
 
+import { fromFileUrl, isAbsolute } from "@std/path";
 import { autoTsJsBundler } from "../../../lib/continuux/bundle.ts";
 import { Application } from "../../../lib/continuux/http.ts";
 import {
@@ -26,14 +27,13 @@ import {
   semanticLayout,
 } from "../../../lib/universal/fluent-ds-semantic.ts";
 import {
-  trustedRaw,
-  render as renderHtml,
   codeTag,
   div,
-  h2,
+  render as renderHtml,
   script,
   small,
   style,
+  trustedRaw,
 } from "../../../lib/universal/fluent-html.ts";
 
 type State = Record<string, never>;
@@ -80,7 +80,6 @@ const pageLayout = () => {
           "Fluent DS + remark in-browser markdown rendering (bundled TS).",
         ),
         body: [
-          h2("Rendered content"),
           div({ id: "status", "aria-busy": "true" }, "Loading markdown..."),
           div({ id: "content" }, ""),
           small(
@@ -104,9 +103,13 @@ const pageHtml = (): string => {
   return render(page.html);
 };
 
-const cssResponse = async (path: string) =>
+const fileResponse = async (
+  path: string,
+  contentType: string,
+  headers?: HeadersInit,
+) =>
   new Response(await Deno.readTextFile(path), {
-    headers: { "content-type": "text/css; charset=utf-8" },
+    headers: { "content-type": contentType, ...(headers ?? {}) },
   });
 
 // Put middleware BEFORE routes.
@@ -138,13 +141,21 @@ app.get("/example.md", () =>
     headers: { "content-type": "text/markdown; charset=utf-8" },
   }));
 
-app.get(
-  "/fluent-ds/semantic.css",
-  () =>
-    cssResponse(
-      new URL("../../../lib/universal/fluent-ds-semantic.css", import.meta.url)
-        .pathname,
-    ),
-);
+// Serve dependency mounts declared by semanticLayout().
+const layoutDeps = Array.from(pageLayout().dependencies);
+for (const dep of layoutDeps) {
+  if (dep.source.startsWith("http://") || dep.source.startsWith("https://")) {
+    continue;
+  }
+  const mountPath = dep.mount;
+  const filePath = dep.source.startsWith("file://")
+    ? fromFileUrl(dep.source)
+    : isAbsolute(dep.source)
+    ? dep.source
+    : "";
+  if (!filePath) continue;
+  const contentType = dep.contentType ?? "application/octet-stream";
+  app.get(mountPath, () => fileResponse(filePath, contentType, dep.headers));
+}
 
 app.serve();
