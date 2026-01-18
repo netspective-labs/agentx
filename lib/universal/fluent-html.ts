@@ -1,37 +1,66 @@
 /**
  * @module lib/universal/fluent-html.ts
  *
- * A tiny, dependency-free “fluent HTML” builder for generating HTML strings on the server (and in tests),
- * without requiring `lib=dom`. It gives you:
+ * A tiny “fluent HTML” builder that produces HAST (Hypertext AST) nodes, and
+ * then serializes them to HTML. The AST emitted by this module is strictly
+ * HAST-compliant (root/element/text/comment/doctype only), so downstream unified
+ * / syntax-tree tooling works cleanly.
  *
+ * What you get:
  * - A typed, ergonomic tag API: `div(...)`, `a(...)`, `table(...)`, etc.
- * - Safe-by-default escaping for text and attribute values.
- * - Controlled “raw HTML” escape hatches via `raw()` and `trustedRaw()`.
- * - A small set of compositional helpers (`attrs`, `classNames`, `styleText`, `each`, `children`).
+ * - Safe-by-default behavior: plain string children become HAST `text` nodes,
+ *   which are escaped by the serializer.
+ * - Boolean attribute semantics: `true` emits a boolean attribute, `false/null/undefined` omit.
+ * - Compositional helpers: `attrs`, `classNames`, `styleText`, `each`, `children`.
+ * - Deterministic minimized and pretty rendering from AST (no stringify then parse).
  *
- * Output
- * - Tag functions return `RawHtml`, a small wrapper around a string intended to be safe to concatenate
- *   and return as an HTTP response body.
- * - The builder also carries an internal HTML AST per node (where possible) so `renderPretty()` can
- *   deterministically pretty-print without parsing HTML strings.
+ * Raw/trusted content (two distinct use cases):
  *
- * Security model
- * - All plain string children are escaped with `escapeHtml`.
- * - All attribute values (except boolean attrs) are escaped with `escapeAttr`.
- * - `raw()` / `trustedRaw()` bypass escaping and should only be used with trusted content.
- * - `setRawPolicy({ mode: "dev-strict" })` can block `raw()` to catch accidental usage.
+ * 1) trustedRaw(html) / raw(html):
+ *    Use when you have trusted HTML markup that should be inserted as markup.
+ *    To keep the AST 100% HAST-compliant, we do NOT emit semistandard `raw` nodes.
+ *    Instead, we parse the provided HTML string into actual HAST nodes (fragment mode),
+ *    and splice those nodes into the tree.
  *
- * Core concepts
- * - Attr values: `Attrs` is a simple `Record<string, string|number|boolean|null|undefined>`.
- *   - `true` emits a boolean attribute (`disabled`, `checked`, etc.).
- *   - `false` / `null` / `undefined` omit the attribute entirely.
- * - Children: `Child` is recursive and supports arrays and builder callbacks.
- *   - `null/undefined/false` are skipped.
- *   - `true` is skipped as a child (use boolean attrs for boolean semantics).
- *   - Arrays are flattened.
- *   - Builder callbacks are executed as the tree is walked.
- * - Void elements: tags like `img`, `br`, `meta` are emitted as `<tag ...>` without a closing tag.
+ *    - `trustedRaw()` always allows this.
+ *    - `raw()` can be blocked by `setRawPolicy({ mode: "dev-strict" })` to catch accidents.
+ *
+ * 2) trustedRawFriendly`...` (alias: javaScript):
+ *    Use for multi-line code/text blocks that must be treated “as-is” (not parsed as HTML).
+ *    This is intended for inline `<script>` and `<style>` content, where parsing as HTML
+ *    would corrupt valid JavaScript/CSS.
+ *
+ *    `trustedRawFriendly` returns HAST `text` nodes (not parsed HTML), so content is kept
+ *    literally. Serializer will still escape `<` as needed, which is correct for script/style
+ *    body text in HTML.
+ *
+ * Important: `scriptJs(code)` and `styleCss(cssText)` always embed their content as plain
+ * text nodes. They do not parse.
+ *
+ * Children model:
+ * - null/undefined/false are skipped
+ * - true is skipped (use boolean attrs instead)
+ * - arrays are flattened
+ * - builder callbacks are executed during flattening and may emit children
+ *
+ * Output model:
+ * - Tag functions return `RawHtml`, a wrapper with both serialized HTML and underlying HAST nodes.
+ * - `render()` and `renderPretty()` serialize HAST nodes (pretty uses `hast-util-format`).
  */
+
+import type {
+  Comment,
+  Doctype,
+  Element,
+  ElementContent,
+  Properties,
+  Root,
+  RootContent,
+  Text,
+} from "hast";
+import { toHtml } from "hast-util-to-html";
+import { format } from "hast-util-format";
+import { fromHtmlIsomorphic } from "hast-util-from-html-isomorphic";
 
 export type AttrValue =
   | string
@@ -42,7 +71,6 @@ export type AttrValue =
 
 export type Attrs = Record<string, AttrValue>;
 
-// Optional dev-time raw policy (defaults to permissive)
 export type RawPolicy = {
   mode?: "permissive" | "dev-strict";
 };
@@ -54,32 +82,13 @@ export function setRawPolicy(policy: RawPolicy): void {
 }
 
 /**
- * HTML AST used to support pretty rendering without parsing HTML.
- *
- * Notes:
- * - `text` is unescaped source text (escaped at render time).
- * - `raw` is a bypass escape hatch (verbatim HTML).
- * - `attrs` are stored in deterministic order at construction.
+ * A safe-to-concatenate HTML wrapper.
+ * `__nodes` are HAST nodes (spec-compliant) used by renderers and downstream tooling.
  */
-export type HtmlAst =
-  | { readonly kind: "fragment"; readonly children: readonly HtmlAst[] }
-  | {
-    readonly kind: "element";
-    readonly tag: string;
-    readonly attrs?: readonly [string, AttrValue | true][];
-    readonly children?: readonly HtmlAst[];
-    readonly void?: boolean;
-  }
-  | { readonly kind: "text"; readonly text: string }
-  | { readonly kind: "raw"; readonly html: string }
-  | { readonly kind: "comment"; readonly text: string }
-  | { readonly kind: "doctype" };
-
-/**
- * A safe-to-concatenate HTML string wrapper.
- * `__ast` is used by `renderPretty()` when available.
- */
-export type RawHtml = { readonly __rawHtml: string; readonly __ast?: HtmlAst };
+export type RawHtml = {
+  readonly __rawHtml: string;
+  readonly __nodes?: readonly RootContent[];
+};
 
 // Structural “DOM Node” shape, safe to reference without lib=dom.
 export type DomNodeLike = { readonly nodeType: number };
@@ -88,7 +97,6 @@ export type DomNodeLike = { readonly nodeType: number };
 export type ChildAdder = (...children: Child[]) => void;
 export type ChildBuilder = (e: ChildAdder) => void;
 
-// A "Child" is recursive and can include builder functions.
 export type Child =
   | string
   | number
@@ -100,24 +108,8 @@ export type Child =
   | Child[]
   | ChildBuilder;
 
-export function trustedRaw(html: string, _hint?: string): RawHtml {
-  return { __rawHtml: html, __ast: { kind: "raw", html } };
-}
-
-/**
- * Escape hatch that can be blocked in dev/test by policy.
- * Use for trusted, pre-escaped HTML snippets.
- */
-export function raw(html: string, hint?: string): RawHtml {
-  if (rawPolicy.mode === "dev-strict") {
-    const msg = hint
-      ? `raw() is blocked by dev-strict policy: ${hint}`
-      : "raw() is blocked by dev-strict policy";
-    throw new Error(msg);
-  }
-  return trustedRaw(html, hint);
-}
-
+// Kept for compatibility and for serializeAttrs() only.
+// Primary escaping is handled by hast-util-to-html.
 export function escapeHtml(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -131,64 +123,119 @@ export function escapeAttr(value: string): string {
   return escapeHtml(value);
 }
 
+function isPlainObject(
+  value: unknown,
+): value is Record<string, unknown> {
+  if (value == null || typeof value !== "object") return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+const isAttrs = (v: unknown): v is Attrs => {
+  if (!isPlainObject(v)) return false;
+  if ("__rawHtml" in (v as Record<string, unknown>)) return false;
+  if ("nodeType" in (v as Record<string, unknown>)) return false;
+  return true;
+};
+
+const VOID_ELEMENTS = new Set([
+  "area",
+  "base",
+  "br",
+  "col",
+  "embed",
+  "hr",
+  "img",
+  "input",
+  "link",
+  "meta",
+  "param",
+  "source",
+  "track",
+  "wbr",
+]);
+
+const isVoidElement = (t: string) => VOID_ELEMENTS.has(t.toLowerCase());
+
+function parseTrustedHtmlToNodes(html: string): readonly RootContent[] {
+  const root = fromHtmlIsomorphic(html, { fragment: true }) as Root;
+  return root.children;
+}
+
+function textNodes(text: string): readonly RootContent[] {
+  const n: Text = { type: "text", value: text };
+  return [n as unknown as RootContent];
+}
+
 /**
- * Template tag for embedding text blocks as trusted raw HTML.
+ * Trusted HTML insertion: parses markup into HAST nodes (fragment) and stores nodes.
+ * This keeps the AST strictly HAST-compliant (no semistandard `raw` nodes).
+ */
+export function trustedRaw(html: string, _hint?: string): RawHtml {
+  const nodes = parseTrustedHtmlToNodes(html);
+  const normalized = toHtml({ type: "root", children: [...nodes] } as Root);
+  return { __rawHtml: normalized, __nodes: nodes };
+}
+
+/**
+ * Escape hatch that can be blocked in dev/test by policy.
+ * Use for trusted HTML snippets that should be inserted as markup.
+ */
+export function raw(html: string, hint?: string): RawHtml {
+  if (rawPolicy.mode === "dev-strict") {
+    const msg = hint
+      ? `raw() is blocked by dev-strict policy: ${hint}`
+      : "raw() is blocked by dev-strict policy";
+    throw new Error(msg);
+  }
+  return trustedRaw(html, hint);
+}
+
+/**
+ * Template tag for embedding “as-is” text blocks (JS/CSS/code).
  *
- * The template literal must start with a blank first line. That line is
- * discarded. The remaining lines are dedented by the minimum common leading
- * indentation and returned as `trustedRaw`.
+ * The template literal must start with a blank first line. That line is discarded.
+ * The remaining lines are dedented by the minimum common leading indentation.
  *
- * This is intended for inline `<script>` usage where source readability matters
- * but deterministic output is required.
- *
- * There is an alias for function called `javaScript`.
+ * Output is HAST `text` nodes (not parsed HTML).
  */
 export function trustedRawFriendly(
   strings: TemplateStringsArray,
   ...exprs: unknown[]
 ): RawHtml {
-  // Reconstruct full string with expressions interpolated
   let full = strings[0] ?? "";
   for (let i = 0; i < exprs.length; i++) {
     full += String(exprs[i]) + (strings[i + 1] ?? "");
   }
 
-  // Normalize newlines
   full = full.replaceAll("\r\n", "\n");
-
   const lines = full.split("\n");
 
-  // Enforce leading blank line
   if (lines.length === 0 || lines[0].trim() !== "") {
-    throw new Error(
-      "javaScript() template must start with a blank first line",
-    );
+    throw new Error("javaScript() template must start with a blank first line");
   }
 
-  // Drop the first (blank) line
   lines.shift();
 
-  // Remove trailing blank lines
   while (lines.length > 0 && lines[lines.length - 1].trim() === "") {
     lines.pop();
   }
 
-  // Compute minimum indentation
   let minIndent = Infinity;
   for (const line of lines) {
     if (!line.trim()) continue;
     const m = line.match(/^(\s*)/);
     if (m) minIndent = Math.min(minIndent, m[1].length);
   }
-
   if (!Number.isFinite(minIndent)) minIndent = 0;
 
-  // Dedent
   const dedented = lines
     .map((l) => (minIndent > 0 ? l.slice(minIndent) : l))
     .join("\n");
 
-  return trustedRaw(dedented);
+  const nodes = textNodes(dedented);
+  const normalized = toHtml({ type: "root", children: [...nodes] } as Root);
+  return { __rawHtml: normalized, __nodes: nodes };
 }
 
 export const javaScript = trustedRawFriendly;
@@ -196,15 +243,6 @@ export const javaScript = trustedRawFriendly;
 /**
  * Flattens children into a linear list of (string | RawHtml | DomNodeLike),
  * executing any builder callbacks as it walks the structure.
- *
- * Rules:
- * - null/undefined/false are skipped
- * - true is skipped (use boolean attrs for boolean semantics)
- * - arrays are recursively expanded
- * - builder functions are executed, and whatever they emit is recursively expanded
- * - RawHtml is passed through as-is
- * - DomNodeLike is passed through as-is (endpoint decides what to do)
- * - other primitives become strings
  */
 export function flattenChildren(
   children: readonly Child[],
@@ -214,7 +252,6 @@ export function flattenChildren(
   const visit = (c: Child): void => {
     if (c == null || c === false) return;
 
-    // Builder callback
     if (typeof c === "function") {
       const emit: ChildAdder = (...xs) => {
         for (const x of xs) visit(x);
@@ -223,25 +260,21 @@ export function flattenChildren(
       return;
     }
 
-    // Nested arrays
     if (Array.isArray(c)) {
       for (const x of c) visit(x);
       return;
     }
 
-    // RawHtml passthrough
     if (typeof c === "object" && c && "__rawHtml" in c) {
       out.push(c as RawHtml);
       return;
     }
 
-    // DomNodeLike passthrough
     if (typeof c === "object" && c && "nodeType" in c) {
       out.push(c as DomNodeLike);
       return;
     }
 
-    // Skip boolean true as a child
     if (c === true) return;
 
     out.push(String(c));
@@ -253,7 +286,6 @@ export function flattenChildren(
 
 export function serializeAttrs(attrs?: Attrs): string {
   if (!attrs) return "";
-
   const keys = Object.keys(attrs).sort();
   let s = "";
   for (const k of keys) {
@@ -266,16 +298,6 @@ export function serializeAttrs(attrs?: Attrs): string {
     s += ` ${k}="${escapeAttr(String(v))}"`;
   }
   return s;
-}
-
-// DX helpers shared by server + client
-
-export function isPlainObject(
-  value: unknown,
-): value is Record<string, unknown> {
-  if (value == null || typeof value !== "object") return false;
-  const proto = Object.getPrototypeOf(value);
-  return proto === Object.prototype || proto === null;
 }
 
 export function attrs(
@@ -336,7 +358,6 @@ export function styleText(
 
 export const css = styleText;
 
-// Explicit wrapper for readability in call sites.
 export function children(builder: ChildBuilder): ChildBuilder {
   return builder;
 }
@@ -357,63 +378,35 @@ export type TagFn = (
   ...children: Child[]
 ) => RawHtml;
 
-const isAttrs = (v: unknown): v is Attrs => {
-  if (!isPlainObject(v)) return false;
-  if ("__rawHtml" in (v as Record<string, unknown>)) return false;
-  if ("nodeType" in (v as Record<string, unknown>)) return false;
-  return true;
-};
-
-const VOID_ELEMENTS = new Set([
-  "area",
-  "base",
-  "br",
-  "col",
-  "embed",
-  "hr",
-  "img",
-  "input",
-  "link",
-  "meta",
-  "param",
-  "source",
-  "track",
-  "wbr",
-]);
-
-const isVoidElement = (t: string) => VOID_ELEMENTS.has(t.toLowerCase());
-
-// AST helpers
-
-function attrsToAst(a: Attrs): readonly [string, AttrValue | true][] {
+function attrsToHastProperties(a: Attrs): Properties {
   const keys = Object.keys(a).sort();
-  const out: [string, AttrValue | true][] = [];
+  const out: Properties = {};
   for (const k of keys) {
     const v = a[k];
     if (v == null || v === false) continue;
-    if (v === true) out.push([k, true]);
-    else out.push([k, v]);
+    (out as Record<string, unknown>)[k] = v === true ? true : v;
   }
   return out;
 }
 
-function childrenToAst(children: readonly Child[]): HtmlAst[] {
+function childrenToHast(children: readonly Child[]): ElementContent[] {
   const flat = flattenChildren(children);
-  const out: HtmlAst[] = [];
+  const out: ElementContent[] = [];
 
   for (const c of flat) {
     if (typeof c === "string") {
-      out.push({ kind: "text", text: c });
+      const t: Text = { type: "text", value: c };
+      out.push(t);
       continue;
     }
 
     if (typeof c === "object" && c && "__rawHtml" in c) {
       const rh = c as RawHtml;
-      out.push(rh.__ast ?? { kind: "raw", html: rh.__rawHtml });
+      const nodes = rh.__nodes ?? parseTrustedHtmlToNodes(rh.__rawHtml);
+      for (const n of nodes) out.push(n as unknown as ElementContent);
       continue;
     }
 
-    // Server renderer does not support DOM nodes
     if (typeof c === "object" && c && "nodeType" in c) {
       throw new Error("Fluent server error: DomNodeLike not supported here.");
     }
@@ -424,150 +417,20 @@ function childrenToAst(children: readonly Child[]): HtmlAst[] {
   return out;
 }
 
-function renderAstMinimized(node: HtmlAst): string {
-  switch (node.kind) {
-    case "fragment":
-      return node.children.map(renderAstMinimized).join("");
-    case "doctype":
-      return "<!doctype html>";
-    case "comment":
-      return `<!--${escapeHtml(node.text)}-->`;
-    case "raw":
-      return node.html;
-    case "text":
-      return escapeHtml(node.text);
-    case "element": {
-      const attrs = node.attrs ?? [];
-      let attrText = "";
-      for (const [k, v] of attrs) {
-        if (v === true) attrText += ` ${k}`;
-        else attrText += ` ${k}="${escapeAttr(String(v))}"`;
-      }
-
-      if (node.void) return `<${node.tag}${attrText}>`;
-
-      const inner = (node.children ?? []).map(renderAstMinimized).join("");
-      return `<${node.tag}${attrText}>${inner}</${node.tag}>`;
-    }
-  }
+function toHtmlMinimizedFromNodes(nodes: readonly RootContent[]): string {
+  const root: Root = { type: "root", children: [...nodes] };
+  return toHtml(root);
 }
 
-function renderAstPretty(root: HtmlAst): string {
-  const lines: string[] = [];
-  const indentUnit = "  ";
-
-  const isRawBlockTag = (t: string) => {
-    const n = t.toLowerCase();
-    return n === "script" || n === "style" || n === "pre" || n === "textarea";
-  };
-
-  const shouldInlineTextOnly = (n: Extract<HtmlAst, { kind: "element" }>) => {
-    if (n.void) return true;
-    const kids = n.children ?? [];
-    if (kids.length === 0) return true;
-    if (kids.length !== 1) return false;
-    const only = kids[0];
-    if (only.kind !== "text") return false;
-    if (only.text.includes("\n")) return false;
-    return only.text.trim().length <= 80;
-  };
-
-  const openTag = (n: Extract<HtmlAst, { kind: "element" }>) => {
-    const attrs = n.attrs ?? [];
-    let attrText = "";
-    for (const [k, v] of attrs) {
-      if (v === true) attrText += ` ${k}`;
-      else attrText += ` ${k}="${escapeAttr(String(v))}"`;
-    }
-    return `<${n.tag}${attrText}>`;
-  };
-
-  const closeTag = (n: Extract<HtmlAst, { kind: "element" }>) => `</${n.tag}>`;
-
-  const emit = (n: HtmlAst, depth: number) => {
-    const pad = indentUnit.repeat(depth);
-
-    switch (n.kind) {
-      case "fragment":
-        for (const c of n.children) emit(c, depth);
-        return;
-
-      case "doctype":
-        lines.push(`${pad}<!doctype html>`);
-        return;
-
-      case "comment":
-        lines.push(`${pad}<!--${escapeHtml(n.text)}-->`);
-        return;
-
-      case "raw": {
-        const raw = n.html.replaceAll("\r\n", "\n");
-        const rawLines = raw.split("\n");
-        for (const rl of rawLines) lines.push(`${pad}${rl}`);
-        return;
-      }
-
-      case "text":
-        lines.push(`${pad}${escapeHtml(n.text)}`);
-        return;
-
-      case "element": {
-        if (n.void) {
-          lines.push(`${pad}${openTag(n)}`);
-          return;
-        }
-
-        const kids = n.children ?? [];
-        const tag = n.tag;
-
-        if (kids.length === 0) {
-          lines.push(`${pad}${openTag(n)}${closeTag(n)}`);
-          return;
-        }
-
-        if (!isRawBlockTag(tag) && shouldInlineTextOnly(n)) {
-          const only = kids[0] as Extract<HtmlAst, { kind: "text" }>;
-          lines.push(
-            `${pad}${openTag(n)}${escapeHtml(only.text)}${closeTag(n)}`,
-          );
-          return;
-        }
-
-        lines.push(`${pad}${openTag(n)}`);
-
-        if (isRawBlockTag(tag)) {
-          // keep inner lines verbatim (no trimming), just indent
-          for (const c of kids) {
-            if (c.kind === "text") {
-              const raw = c.text.replaceAll("\r\n", "\n");
-              for (const line of raw.split("\n")) {
-                lines.push(`${pad}${indentUnit}${line}`);
-              }
-            } else if (c.kind === "raw") {
-              const raw = c.html.replaceAll("\r\n", "\n");
-              for (const line of raw.split("\n")) {
-                lines.push(`${pad}${indentUnit}${line}`);
-              }
-            } else {
-              emit(c, depth + 1);
-            }
-          }
-        } else {
-          for (const c of kids) emit(c, depth + 1);
-        }
-
-        lines.push(`${pad}${closeTag(n)}`);
-        return;
-      }
-    }
-  };
-
-  emit(root, 0);
-  return lines.length ? lines.join("\n") + "\n" : "";
+function toHtmlPrettyFromNodes(nodes: readonly RootContent[]): string {
+  const root: Root = { type: "root", children: structuredClone([...nodes]) };
+  format(root);
+  const html = toHtml(root);
+  return html.endsWith("\n") ? html : html + "\n";
 }
 
 // Internal primitive, intentionally not exported.
-const el = (tag: string, ...args: unknown[]) => {
+const el = (tagName: string, ...args: unknown[]): RawHtml => {
   let at: Attrs | undefined;
   let kids: Child[];
 
@@ -578,15 +441,17 @@ const el = (tag: string, ...args: unknown[]) => {
     kids = args as Child[];
   }
 
-  const ast: HtmlAst = {
-    kind: "element",
-    tag,
-    attrs: at ? attrsToAst(at) : undefined,
-    void: isVoidElement(tag) ? true : undefined,
-    children: isVoidElement(tag) ? undefined : childrenToAst(kids),
+  const elem: Element = {
+    type: "element",
+    tagName,
+    properties: at ? attrsToHastProperties(at) : {},
+    children: isVoidElement(tagName) ? [] : childrenToHast(kids),
   };
 
-  return { __rawHtml: renderAstMinimized(ast), __ast: ast } satisfies RawHtml;
+  const nodes = [elem as unknown as RootContent];
+  const minimized = toHtmlMinimizedFromNodes(nodes);
+
+  return { __rawHtml: minimized, __nodes: nodes };
 };
 
 const tag = (name: string): TagFn => (...args: unknown[]) =>
@@ -594,42 +459,65 @@ const tag = (name: string): TagFn => (...args: unknown[]) =>
 
 // Convenience primitives
 export const doctype: () => RawHtml = () => {
-  const ast: HtmlAst = { kind: "doctype" };
-  return { __rawHtml: renderAstMinimized(ast), __ast: ast };
+  const n: Doctype = { type: "doctype" };
+  const nodes = [n as unknown as RootContent];
+  return { __rawHtml: toHtmlMinimizedFromNodes(nodes), __nodes: nodes };
 };
 
 export const comment: (s: string) => RawHtml = (s) => {
-  const ast: HtmlAst = { kind: "comment", text: s };
-  return { __rawHtml: renderAstMinimized(ast), __ast: ast };
+  const n: Comment = { type: "comment", value: s };
+  const nodes = [n as unknown as RootContent];
+  return { __rawHtml: toHtmlMinimizedFromNodes(nodes), __nodes: nodes };
 };
 
-// Render helpers for HTTP responses and tests
+// Render helpers
 export type RenderMinimized = (...parts: Array<string | RawHtml>) => string;
 export type RenderPretty = (...parts: Array<string | RawHtml>) => string;
 
-// minimized: fastest, no layout guarantees
-export const render: RenderMinimized = (...parts) =>
-  parts.map((p) => (typeof p === "string" ? p : p.__rawHtml)).join("");
-
-// pretty: deterministic, AST-based formatting (goldens, docs, etc.)
-export const renderPretty: RenderPretty = (...parts) => {
-  const astParts: HtmlAst[] = parts.map((p) => {
-    if (typeof p === "string") return { kind: "raw", html: p };
-    return p.__ast ?? { kind: "raw", html: p.__rawHtml };
-  });
-  return renderAstPretty({ kind: "fragment", children: astParts });
+/**
+ * render():
+ * - Uses HAST serialization for determinism.
+ * - For plain string parts, we treat them as trusted HTML fragments and parse them
+ *   (this preserves past behavior where callers could concatenate prebuilt HTML strings).
+ *   If you want “strings mean literal text”, wrap them as children to elements (text nodes),
+ *   or change this function to emit Text nodes for string parts.
+ */
+export const render: RenderMinimized = (...parts) => {
+  const nodes: RootContent[] = [];
+  for (const p of parts) {
+    if (typeof p === "string") {
+      nodes.push(...parseTrustedHtmlToNodes(p));
+      continue;
+    }
+    if (p.__nodes) {
+      nodes.push(...p.__nodes);
+      continue;
+    }
+    nodes.push(...parseTrustedHtmlToNodes(p.__rawHtml));
+  }
+  return toHtmlMinimizedFromNodes(nodes);
 };
 
-// Safer script/style helpers
+export const renderPretty: RenderPretty = (...parts) => {
+  const nodes: RootContent[] = [];
+  for (const p of parts) {
+    if (typeof p === "string") nodes.push(...parseTrustedHtmlToNodes(p));
+    else if (p.__nodes) nodes.push(...p.__nodes);
+    else nodes.push(...parseTrustedHtmlToNodes(p.__rawHtml));
+  }
+  return toHtmlPrettyFromNodes(nodes);
+};
+
+// Safe script/style helpers: always embed as text, never parse as HTML
 export const scriptJs: (code: string, attrs?: Attrs) => RawHtml = (
   code,
   attrs,
-) => script(attrs ?? {}, trustedRaw(code));
+) => script(attrs ?? {}, code);
 
 export const styleCss: (cssText: string, attrs?: Attrs) => RawHtml = (
   cssText,
   attrs,
-) => style(attrs ?? {}, trustedRaw(cssText));
+) => style(attrs ?? {}, cssText);
 
 // Type-safe custom element tag helper (server)
 export const customElement = (name: `${string}-${string}`): TagFn => tag(name);
