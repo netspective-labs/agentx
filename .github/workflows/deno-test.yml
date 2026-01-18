@@ -1,4 +1,4 @@
-name: Run Deno Tests
+name: Run Junxion UX Tests
 
 on:
   push:
@@ -21,6 +21,15 @@ jobs:
         uses: denoland/setup-deno@v1
         with:
           deno-version: v2.x
+
+      - name: Setup Node (for Playwright)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Playwright browsers and deps
+        run: |
+          npx playwright install --with-deps chromium
 
       - name: Run tests
         run: deno task test
