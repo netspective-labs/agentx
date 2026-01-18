@@ -24,8 +24,10 @@ import * as path from "@std/path";
 
 import {
   buildFsRouteManifest,
+  FsContentMount,
   type FsRouteMatchInfo,
   type FsRoutesMount,
+  httpFsContent,
   httpFsRoutes,
   tsBundleTransform,
 } from "./http-fs-routes.ts";
@@ -87,6 +89,45 @@ async function makeAppAndFetch<
   );
 
   // Fallback notFound for clarity in tests.
+  app.notFound((c) =>
+    textResponse(`NOT_FOUND ${c.req.method} ${c.url.pathname}`, 404)
+  );
+
+  const req = new Request(`http://localhost${urlPath}`, init);
+  return await app.fetch(req);
+}
+
+// Add a helper alongside makeAppAndFetch (keeps existing tests untouched).
+async function makeContentAppAndFetch<
+  State extends Record<string, unknown> = Record<string, unknown>,
+  Vars extends VarsRecord = VarsRecord,
+>(
+  mounts: FsContentMount[],
+  urlPath: string,
+  init?: RequestInit,
+  extra?: {
+    loader?: (
+      info: FsRouteMatchInfo,
+    ) => Response | null | undefined | Promise<Response | null | undefined>;
+    cacheControl?: string;
+    etag?: "weak" | "strong" | false;
+    enableLastModified?: boolean;
+    transforms?: HttpTransform<State, Vars>[];
+  },
+): Promise<Response> {
+  const app = Application.sharedState<State, Vars>({} as State);
+
+  app.use(
+    httpFsContent<State, Vars>({
+      mounts,
+      loader: extra?.loader ? (_c, info) => extra.loader!(info) : undefined,
+      cacheControl: extra?.cacheControl,
+      etag: extra?.etag,
+      enableLastModified: extra?.enableLastModified,
+      transforms: extra?.transforms,
+    }),
+  );
+
   app.notFound((c) =>
     textResponse(`NOT_FOUND ${c.req.method} ${c.url.pathname}`, 404)
   );
@@ -706,6 +747,289 @@ Deno.test("http-fs-routes: tsBundleTransform bundles .ts as JS module on the fly
     // If this ever gets too brittle, you can relax or remove this assertion.
     // @ts-ignore allow possible miss
     assertMatch(js, /"hi"/);
+  });
+});
+
+Deno.test("http-fs-content: basic 1:1 static file serving under root mount", async () => {
+  await withTempDir(async (root) => {
+    await writeFile(root, "hello.txt", "Hello FS Content");
+
+    const mounts: FsContentMount[] = [
+      { mount: "/", root },
+    ];
+
+    const res = await makeContentAppAndFetch(mounts, "/hello.txt");
+    assertEquals(res.status, 200);
+    assertEquals(await res.text(), "Hello FS Content");
+
+    const ct = res.headers.get("content-type");
+    if (ct) assertMatch(ct, /text\/plain/);
+  });
+});
+
+Deno.test("http-fs-content: index resolution for / and /dir (with and without trailing slash)", async () => {
+  await withTempDir(async (root) => {
+    await writeFile(root, "index.html", "<h1>Home</h1>");
+    await writeFile(root, "guide/index.html", "<h1>Guide</h1>");
+
+    const mounts: FsContentMount[] = [
+      { mount: "/docs", root, indexFiles: ["index.html"] },
+    ];
+
+    {
+      const res = await makeContentAppAndFetch(mounts, "/docs");
+      assertEquals(res.status, 200);
+      assertEquals(await res.text(), "<h1>Home</h1>");
+    }
+
+    {
+      const res = await makeContentAppAndFetch(mounts, "/docs/");
+      assertEquals(res.status, 200);
+      assertEquals(await res.text(), "<h1>Home</h1>");
+    }
+
+    {
+      const res = await makeContentAppAndFetch(mounts, "/docs/guide");
+      assertEquals(res.status, 200);
+      assertEquals(await res.text(), "<h1>Guide</h1>");
+    }
+
+    {
+      const res = await makeContentAppAndFetch(mounts, "/docs/guide/");
+      assertEquals(res.status, 200);
+      assertEquals(await res.text(), "<h1>Guide</h1>");
+    }
+  });
+});
+
+Deno.test("http-fs-content: hidden URL segments are not routable", async () => {
+  await withTempDir(async (root) => {
+    await writeFile(root, "_internal/secret.html", "<h1>Secret</h1>");
+    await writeFile(root, ".hidden/secret.html", "<h1>Hidden</h1>");
+
+    const mounts: FsContentMount[] = [
+      { mount: "/", root },
+    ];
+
+    {
+      const res = await makeContentAppAndFetch(
+        mounts,
+        "/_internal/secret.html",
+      );
+      assertEquals(res.status, 404);
+      assertMatch(await res.text(), /^NOT_FOUND/);
+    }
+
+    {
+      const res = await makeContentAppAndFetch(mounts, "/.hidden/secret.html");
+      assertEquals(res.status, 404);
+      assertMatch(await res.text(), /^NOT_FOUND/);
+    }
+  });
+});
+
+Deno.test("http-fs-content: allow/deny patterns filter served files", async () => {
+  await withTempDir(async (root) => {
+    await writeFile(root, "public/page.html", "<h1>Public</h1>");
+    await writeFile(root, "private/page.html", "<h1>Private</h1>");
+    await writeFile(root, "public/data.json", `{"ok":true}`);
+
+    const mounts: FsContentMount[] = [
+      {
+        mount: "/site",
+        root,
+        allowGlobs: ["**/*.html"],
+        denyGlobs: ["private/**"],
+      },
+    ];
+
+    {
+      const res = await makeContentAppAndFetch(
+        mounts,
+        "/site/public/page.html",
+      );
+      assertEquals(res.status, 200);
+      assertEquals(await res.text(), "<h1>Public</h1>");
+    }
+
+    // Denied by denyGlobs
+    {
+      const res = await makeContentAppAndFetch(
+        mounts,
+        "/site/private/page.html",
+      );
+      assertEquals(res.status, 404);
+      assertMatch(await res.text(), /^NOT_FOUND/);
+    }
+
+    // Not allowed by allowGlobs (json)
+    {
+      const res = await makeContentAppAndFetch(
+        mounts,
+        "/site/public/data.json",
+      );
+      assertEquals(res.status, 404);
+      assertMatch(await res.text(), /^NOT_FOUND/);
+    }
+  });
+});
+
+Deno.test("http-fs-content: mount precedence prefers longer mount", async () => {
+  await withTempDir(async (root) => {
+    const docsRoot = path.join(root, "docs");
+    const rootRoot = path.join(root, "root");
+
+    await writeFile(docsRoot, "x.txt", "DOCS");
+    await writeFile(rootRoot, "docs/x.txt", "ROOT");
+
+    const mounts: FsContentMount[] = [
+      { mount: "/", root: rootRoot },
+      { mount: "/docs", root: docsRoot },
+    ];
+
+    // Must resolve from docsRoot (not /root/docs/x.txt).
+    const res = await makeContentAppAndFetch(mounts, "/docs/x.txt");
+    assertEquals(res.status, 200);
+    assertEquals(await res.text(), "DOCS");
+  });
+});
+
+Deno.test("http-fs-content: HEAD requests strip body but keep headers", async () => {
+  await withTempDir(async (root) => {
+    await writeFile(root, "hello.txt", "Hello for HEAD");
+
+    const mounts: FsContentMount[] = [
+      { mount: "/", root },
+    ];
+
+    const res = await makeContentAppAndFetch(
+      mounts,
+      "/hello.txt",
+      { method: "HEAD" },
+    );
+
+    assertEquals(res.status, 200);
+    assertEquals(await res.text(), "");
+
+    const ct = res.headers.get("content-type");
+    if (ct) assertMatch(ct, /text\/plain/);
+  });
+});
+
+Deno.test("http-fs-content: ETag and Last-Modified with conditional requests", async () => {
+  await withTempDir(async (root) => {
+    const fileRel = "cached.txt";
+    const filePath = path.join(root, fileRel);
+    await writeFile(root, fileRel, "Cached content");
+
+    const mounts: FsContentMount[] = [
+      { mount: "/", root },
+    ];
+
+    const first = await makeContentAppAndFetch(
+      mounts,
+      "/cached.txt",
+      undefined,
+      {
+        cacheControl: "public, max-age=60",
+        etag: false,
+        enableLastModified: true,
+      },
+    );
+
+    assertEquals(first.status, 200);
+    assert(first.headers.get("last-modified"));
+    assertEquals(first.headers.get("cache-control"), "public, max-age=60");
+
+    const stat = await Deno.stat(filePath);
+    assert(stat.mtime);
+    const future = new Date(stat.mtime!.getTime() + 24 * 60 * 60 * 1000)
+      .toUTCString();
+
+    const second = await makeContentAppAndFetch(
+      mounts,
+      "/cached.txt",
+      { headers: { "if-modified-since": future } },
+      {
+        cacheControl: "public, max-age=60",
+        etag: false,
+        enableLastModified: true,
+      },
+    );
+
+    assertEquals(second.status, 304);
+    assertEquals(await second.text(), "");
+  });
+});
+
+Deno.test("http-fs-content: weak ETag and If-None-Match", async () => {
+  await withTempDir(async (root) => {
+    await writeFile(root, "etag.txt", "ETag content");
+
+    const mounts: FsContentMount[] = [
+      { mount: "/", root },
+    ];
+
+    const first = await makeContentAppAndFetch(
+      mounts,
+      "/etag.txt",
+      undefined,
+      { etag: "weak", enableLastModified: false },
+    );
+
+    assertEquals(first.status, 200);
+    const etag = first.headers.get("etag");
+    assert(etag);
+
+    const second = await makeContentAppAndFetch(
+      mounts,
+      "/etag.txt",
+      { headers: { "if-none-match": etag } },
+      { etag: "weak", enableLastModified: false },
+    );
+
+    assertEquals(second.status, 304);
+    assertEquals(await second.text(), "");
+  });
+});
+
+Deno.test("http-fs-content: content transforms can rewrite body (uppercase .txt)", async () => {
+  await withTempDir(async (root) => {
+    await writeFile(root, "note.txt", "hello world");
+
+    const mounts: FsContentMount[] = [
+      { mount: "/", root },
+    ];
+
+    const td = new TextDecoder();
+
+    const transforms: HttpTransform<Record<string, unknown>, VarsRecord>[] = [
+      async (ctx) => {
+        // deno-lint-ignore no-explicit-any
+        const fsRoute = (ctx as any).fsRoute as FsRouteMatchInfo | undefined;
+        if (!fsRoute || fsRoute.ext !== ".txt") return null;
+
+        const buf = new Uint8Array(await ctx.response.arrayBuffer());
+        const text = td.decode(buf).toUpperCase();
+
+        return {
+          body: text,
+          headers: { "x-transformed": "uppercase" },
+          status: ctx.response.status,
+        };
+      },
+    ];
+
+    const res = await makeContentAppAndFetch(
+      mounts,
+      "/note.txt",
+      undefined,
+      { transforms },
+    );
+
+    assertEquals(res.status, 200);
+    assertEquals(await res.text(), "HELLO WORLD");
+    assertEquals(res.headers.get("x-transformed"), "uppercase");
   });
 });
 

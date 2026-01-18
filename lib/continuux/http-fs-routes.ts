@@ -509,6 +509,307 @@ export function httpFsRoutes<State, Vars extends VarsRecord>(
   };
 }
 
+// On-demand filesystem content middleware.
+// Unlike httpFsRoutes, this does not pre-walk or build a manifest.
+// It maps incoming requests 1:1 to the filesystem under one of the mounts.
+//
+// Mapping rules:
+// - Only GET/HEAD.
+// - A request matches a mount if URL pathname starts with mount.mount.
+// - The remainder of the path maps to <root>/<remainder>.
+// - If the mapped path is a directory (or the URL ends with "/"), it tries index files.
+// - Hidden segments (starting "_" or ".") are never routable.
+// - Optional allow/deny matching via globs and/or regexes against the relative POSIX path.
+// - Optional conditional GET via ETag + Last-Modified.
+// - Optional transforms pipeline for GET only (HEAD is not transformed).
+
+export type FsContentMount = {
+  mount: string; // URL base, e.g. "/docs"
+  root: string; // filesystem root directory
+
+  // Optional allowlist globs applied to the resolved relPath (POSIX).
+  // If present, the file must match at least one.
+  allowGlobs?: string[];
+
+  // Optional denylist globs applied to the resolved relPath (POSIX).
+  // If present, any match blocks the file.
+  denyGlobs?: string[];
+
+  // Optional allowlist regexes applied to the resolved relPath (POSIX).
+  allowRe?: RegExp[];
+
+  // Optional denylist regexes applied to the resolved relPath (POSIX).
+  denyRe?: RegExp[];
+
+  // Index file candidates when the mapped path is a directory or URL ends with "/".
+  indexFiles?: string[]; // default: ["index.html"]
+
+  // Optional: treat these extensions as disallowed (e.g. [".ts", ".tsx"]).
+  denyExts?: string[];
+
+  // Optional: if provided, only these extensions are allowed.
+  allowExts?: string[];
+};
+
+export type FsContentOptions<State, Vars extends VarsRecord> = {
+  mounts: FsContentMount[];
+
+  // Low-level override: if this returns a Response, it is used as-is.
+  loader?: (
+    ctx: HandlerCtx<string, State, Vars>,
+    info: FsRouteMatchInfo,
+  ) => Response | null | undefined | Promise<Response | null | undefined>;
+
+  // Transform pipeline for GET only.
+  transforms?: HttpTransform<State, Vars>[];
+
+  // Cache headers / conditional GETs.
+  cacheControl?: string;
+  etag?: FsRoutesEtagMode;
+  enableLastModified?: boolean;
+};
+
+const relPosixFromUrlPath = (p: string): string => {
+  // p is already URL pathname-ish; normalize to rel without leading "/"
+  const s = p.replaceAll("\\", "/");
+  const noLead = s.startsWith("/") ? s.slice(1) : s;
+  // Prevent "." and ".." traversal by normalizing and rejecting if it escapes.
+  const normalized = path.normalize(`/${noLead}`).slice(1);
+  return normalized;
+};
+
+const hasHiddenSegmentInRel = (relPosix: string): boolean => {
+  const segs = relPosix.split("/").filter((s) => s.length > 0);
+  for (const s of segs) {
+    if (isHiddenSegment(s)) return true;
+  }
+  return false;
+};
+
+const compileGlobList = (_rootAbs: string, globs: string[]): RegExp[] =>
+  globs.map((g) => {
+    // Globs are evaluated against relPosix; we compile directly.
+    // We still run them as regex matches on the rel path string.
+    const re = path.globToRegExp(g, { extended: true, globstar: true });
+    // globToRegExp returns a RegExp anchored for full-string match;
+    // we keep it as-is.
+    return new RegExp(re.source);
+  });
+
+const matchesAny = (s: string, res: RegExp[] | undefined): boolean =>
+  (res ?? []).some((re) => re.test(s));
+
+const normalizeExt = (ext: string): string =>
+  ext.startsWith(".") ? ext : `.${ext}`;
+
+const extAllowed = (ext: string, m: FsContentMount): boolean => {
+  const e = normalizeExt(ext);
+  if (m.denyExts?.some((x) => normalizeExt(x) === e)) return false;
+  if (m.allowExts && m.allowExts.length > 0) {
+    return m.allowExts.some((x) => normalizeExt(x) === e);
+  }
+  return true;
+};
+
+export function httpFsContent<State, Vars extends VarsRecord>(
+  opts: FsContentOptions<State, Vars>,
+): Middleware<State, Vars> {
+  if (!opts.mounts || opts.mounts.length === 0) {
+    throw new Error("httpFsContent: at least one mount is required");
+  }
+
+  const compiledPromise = (async () => {
+    const mounts = [];
+    for (const m of opts.mounts) {
+      const rootAbs = await Deno.realPath(m.root);
+      const mountBase = normalizeMountPath(m.mount);
+      const allowGlobRe = m.allowGlobs?.length
+        ? compileGlobList(rootAbs, m.allowGlobs)
+        : undefined;
+      const denyGlobRe = m.denyGlobs?.length
+        ? compileGlobList(rootAbs, m.denyGlobs)
+        : undefined;
+
+      mounts.push({
+        ...m,
+        rootAbs,
+        mountBase, // "" means root
+        allowGlobRe,
+        denyGlobRe,
+        indexFiles: (m.indexFiles && m.indexFiles.length > 0)
+          ? m.indexFiles
+          : ["index.html"],
+      });
+    }
+
+    // Prefer longer mount paths first so "/docs" beats "/".
+    mounts.sort((a, b) => b.mountBase.length - a.mountBase.length);
+    return mounts;
+  })();
+
+  return async (c, next) => {
+    const method = c.req.method.toUpperCase() as HttpMethod;
+    if (method !== "GET" && method !== "HEAD") return await next();
+
+    const url = new URL(c.req.url);
+    const pathname = url.pathname;
+
+    const mounts = await compiledPromise;
+
+    // Find best mount match.
+    let mm:
+      | (typeof mounts[number] & { subPath: string })
+      | null = null;
+
+    for (const m of mounts) {
+      if (!m.mountBase) {
+        mm = { ...m, subPath: pathname };
+        break;
+      }
+      if (pathname === m.mountBase || pathname.startsWith(m.mountBase + "/")) {
+        const sub = pathname.slice(m.mountBase.length);
+        mm = { ...m, subPath: sub.length ? sub : "/" };
+        break;
+      }
+    }
+
+    if (!mm) return await next();
+
+    // Compute rel path under root.
+    // Example mount "/docs", request "/docs/guide/a.html" -> subPath "/guide/a.html"
+    const relPosix = relPosixFromUrlPath(mm.subPath);
+    if (hasHiddenSegmentInRel(relPosix)) return await next();
+
+    const mappedAbs = path.join(mm.rootAbs, relPosix);
+    const urlEndsWithSlash = pathname.endsWith("/");
+
+    // Determine candidate files.
+    const candidates: { abs: string; rel: string }[] = [];
+
+    // If URL points to a directory (ends with "/"), prefer index files.
+    if (urlEndsWithSlash) {
+      const relDir = relPosix.length > 0 ? relPosix.replace(/\/+$/, "") : "";
+      for (const idx of mm.indexFiles) {
+        const rel = relDir ? `${relDir}/${idx}` : idx;
+        candidates.push({ abs: path.join(mm.rootAbs, rel), rel });
+      }
+    } else {
+      // First try exact mapping.
+      candidates.push({ abs: mappedAbs, rel: relPosix });
+
+      // If exact mapping is a directory, also try index files.
+      // (We don't stat yet; we will during resolution.)
+      const relDir = relPosix.replace(/\/+$/, "");
+      for (const idx of mm.indexFiles) {
+        const rel = relDir ? `${relDir}/${idx}` : idx;
+        candidates.push({ abs: path.join(mm.rootAbs, rel), rel });
+      }
+    }
+
+    // Resolve first existing file candidate that passes filters.
+    let chosen:
+      | {
+        abs: string;
+        rel: string;
+        stat: Deno.FileInfo;
+        filename: string;
+        ext: string;
+      }
+      | null = null;
+
+    for (const cand of candidates) {
+      try {
+        const stat = await Deno.stat(cand.abs);
+        if (!stat.isFile) continue;
+
+        const rel = cand.rel.replaceAll("\\", "/");
+        const filename = rel.split("/").pop() ?? "";
+        const { ext } = parsePosix(filename);
+
+        if (!extAllowed(ext, mm)) continue;
+
+        // Allow/deny globs/regex against rel path.
+        if (mm.denyGlobRe && matchesAny(rel, mm.denyGlobRe)) continue;
+        if (mm.denyRe && matchesAny(rel, mm.denyRe)) continue;
+
+        if (mm.allowGlobRe && mm.allowGlobRe.length > 0) {
+          if (!matchesAny(rel, mm.allowGlobRe)) continue;
+        }
+        if (mm.allowRe && mm.allowRe.length > 0) {
+          if (!matchesAny(rel, mm.allowRe)) continue;
+        }
+
+        chosen = { abs: cand.abs, rel, stat, filename, ext };
+        break;
+      } catch {
+        // keep trying
+      }
+    }
+
+    if (!chosen) return await next();
+
+    const info: FsRouteMatchInfo = {
+      mount: { mount: mm.mount, root: mm.rootAbs },
+      filePath: chosen.abs,
+      relPath: chosen.rel,
+      template: mm.mountBase
+        ? `${mm.mountBase}/${chosen.rel}`.replaceAll("//", "/")
+        : `/${chosen.rel}`.replaceAll("//", "/"),
+      routePath: pathname,
+      params: {},
+      method,
+      segments: chosen.rel.split("/").filter((s) => s.length > 0),
+      filename: chosen.filename,
+      ext: chosen.ext,
+    };
+
+    const ctx = c as HandlerCtx<string, State, Vars>;
+
+    if (opts.loader) {
+      const override = await opts.loader(ctx, info);
+      if (override instanceof Response) return override;
+    }
+
+    const headers = new Headers();
+
+    const ct = contentType(chosen.filename) ?? undefined;
+    if (ct) headers.set("content-type", ct);
+
+    if (opts.cacheControl) headers.set("cache-control", opts.cacheControl);
+
+    const mtime = chosen.stat.mtime ?? undefined;
+    if (opts.enableLastModified && mtime) {
+      headers.set("last-modified", mtime.toUTCString());
+    }
+
+    const etag = computeEtag(opts.etag ?? false, chosen.stat);
+    if (etag) headers.set("etag", etag);
+
+    if (shouldSendNotModified(c.req, etag, mtime)) {
+      return new Response(null, { status: 304, headers });
+    }
+
+    if (method === "HEAD") {
+      return new Response(null, { status: 200, headers });
+    }
+
+    const body = await Deno.readFile(chosen.abs);
+    let res = new Response(body, { status: 200, headers });
+
+    const transforms = opts.transforms ?? [];
+    if (transforms.length > 0) {
+      const tctx = {
+        ...(ctx as HandlerCtx<string, State, Vars>),
+        response: res,
+        fsRoute: info,
+      };
+      res = await applyTransforms<State, Vars>(tctx, transforms);
+    }
+
+    return res;
+  };
+}
+
 /* =========================
  * Convenience: TS bundling transform
  * ========================= */
