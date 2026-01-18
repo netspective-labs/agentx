@@ -14,12 +14,17 @@
  * - Optional max request body size (defensive against large uploads)
  * - Optional response security headers overlay
  * - Structured error hooks for logging/observability
+ * - Shared HttpTransform pipeline support (same transforms usable in fs routes)
  */
 
 import {
+  applyTransforms,
   asError,
   type HandlerCtx,
   HttpMethod,
+  type HttpTransform,
+  type HttpTransformContext,
+  type HttpTransformResult,
   type Middleware,
   textResponse,
   type VarsRecord,
@@ -59,6 +64,21 @@ export type ProxyErrorInfo = {
 };
 
 /**
+ * Proxy-specific aliases for the shared transform types.
+ * These keep the generics consistent with http.ts and allow
+ * transforms to be reused between fs routes and proxy.
+ */
+export type ProxyTransform<State, Vars extends VarsRecord> = HttpTransform<
+  State,
+  Vars
+>;
+
+export type ProxyTransformContext<State, Vars extends VarsRecord> =
+  HttpTransformContext<State, Vars>;
+
+export type ProxyTransformResult = HttpTransformResult;
+
+/**
  * Single proxy route configuration.
  */
 export type ProxyRoute<State, Vars extends VarsRecord> = {
@@ -88,6 +108,9 @@ export type ProxyRoute<State, Vars extends VarsRecord> = {
 
   /**
    * Optional per-route response rewriter.
+   *
+   * Note: this runs before the shared HttpTransform pipeline so you can
+   * keep legacy behavior and still opt into new transforms.
    */
   rewriteResponse?: ProxyResponseRewriter<State, Vars>;
 };
@@ -169,6 +192,15 @@ export type HttpProxyOptions<State, Vars extends VarsRecord> = {
     kind: ProxyErrorKind,
     info: ProxyErrorInfo,
   ) => Response | void | Promise<Response | void>;
+
+  /**
+   * Shared HttpTransform pipeline applied to the proxied response
+   * (after per-route rewriteResponse and header sanitization).
+   *
+   * The same transform functions can be reused with fs routes because
+   * they share the exact same HttpTransform signature.
+   */
+  transforms?: ProxyTransform<State, Vars>[];
 };
 
 /**
@@ -298,6 +330,7 @@ export function httpProxy<State, Vars extends VarsRecord>(
     stripResponseHeader,
     securityHeaders,
     onProxyError,
+    transforms,
   } = options;
 
   if (!routes || routes.length === 0) {
@@ -585,7 +618,7 @@ export function httpProxy<State, Vars extends VarsRecord>(
       if (timeoutId !== undefined) clearTimeout(timeoutId);
     }
 
-    // Allow a per-route response rewriter.
+    // Per-route response rewriter (still supported, before transforms).
     let finalRes = upstreamRes;
     if (route.rewriteResponse) {
       finalRes = await route.rewriteResponse(c, upstreamRes);
@@ -596,130 +629,48 @@ export function httpProxy<State, Vars extends VarsRecord>(
       securityHeaders,
     });
 
-    // For HEAD requests, strip body but keep sanitized headers/status.
-    if (method === "HEAD") {
-      return new Response(null, {
+    // Build a base response with HEAD semantics respected.
+    let response = new Response(
+      method === "HEAD" ? null : finalRes.body,
+      {
         status: finalRes.status,
         headers: sanitizedHeaders,
-      });
+      },
+    );
+
+    const pipeline = transforms ?? [];
+    if (pipeline.length === 0) {
+      return response;
     }
 
-    // Default: stream upstream body with sanitized headers.
-    return new Response(finalRes.body, {
-      status: finalRes.status,
-      headers: sanitizedHeaders,
-    });
+    const ctxWithRes: HttpTransformContext<State, Vars> = {
+      ...(c as HandlerCtx<string, State, Vars>),
+      response,
+    };
+
+    response = await applyTransforms(ctxWithRes, pipeline);
+
+    return response;
   };
 }
 
 /**
  * Declarative proxy manifest layer
- *
- * This provides a file/manifest-friendly way to configure proxy routes:
- *
- *   const proxy = httpProxyFromManifest<State, Vars>(
- *     [
- *       {
- *         name: "api",
- *         mount: "/api",
- *         upstream: "https://backend.internal/api",
- *         stripMount: true,
- *         methods: ["GET", "POST"],
- *         forwardQuery: true,
- *         requestHeaders: {
- *           set: { "x-tenant": "acme" },
- *         },
- *         responseHeaders: {
- *           set: { "x-proxy": "continuux" },
- *         },
- *       },
- *     ],
- *     {
- *       timeoutMs: 5000,
- *       requireHttpsUpstream: true,
- *     },
- *   );
- *
- *   app.use(proxy);
  */
 
-/**
- * Per-route declarative config for httpProxyFromManifest.
- *
- * State and Vars generics are threaded so `extraMatch` can see typed vars.
- */
 export type ProxyManifestRoute<State, Vars extends VarsRecord> = {
   name?: string;
-
-  /**
-   * Mount path prefix, e.g. "/api" or "/service".
-   * All requests whose pathname starts with this prefix will be candidates.
-   */
   mount: string;
-
-  /**
-   * Upstream base URL. May be a string or URL. Path and query rewriting
-   * will be applied relative to this base.
-   *
-   * Examples:
-   *   "https://backend.internal"
-   *   "https://backend.internal/base"
-   */
   upstream: string | URL;
-
-  /**
-   * Methods this route should handle. If omitted, all methods are allowed.
-   */
   methods?: HttpMethod[];
-
-  /**
-   * If true (default), the mount prefix is stripped from the request path
-   * before joining with upstream's pathname.
-   *
-   * Example:
-   *   mount = "/api"
-   *   upstream = "https://backend.internal"
-   *   request path = "/api/users"
-   *   stripMount = true → upstream path "/users"
-   *   stripMount = false → upstream path "/api/users"
-   */
   stripMount?: boolean;
-
-  /**
-   * If true (default), the client's query string is forwarded to upstream.
-   * If false, upstream's query string is left as-is.
-   */
   forwardQuery?: boolean;
-
-  /**
-   * Optional additional match predicate (e.g. host, headers).
-   * Only runs if the mount prefix matches.
-   */
   extraMatch?: ProxyRouteMatch<State, Vars>;
-
-  /**
-   * Simple request header adjustments at the manifest level.
-   * These run after the base proxy has applied x-forwarded-* etc.
-   */
   requestHeaders?: {
-    /**
-     * Headers to set (overwrites any existing value).
-     */
     set?: Record<string, string>;
-    /**
-     * Headers to add in addition to existing ones.
-     */
     add?: Record<string, string>;
-    /**
-     * Headers to drop (case-insensitive).
-     */
     drop?: string[];
   };
-
-  /**
-   * Simple response header adjustments at the manifest level.
-   * These run before the global sanitizeResponseHeaders() pass.
-   */
   responseHeaders?: {
     set?: Record<string, string>;
     add?: Record<string, string>;
@@ -727,9 +678,6 @@ export type ProxyManifestRoute<State, Vars extends VarsRecord> = {
   };
 };
 
-/**
- * Case-insensitive header delete helper.
- */
 const deleteHeaderCaseInsensitive = (headers: Headers, name: string) => {
   const lower = name.toLowerCase();
   for (const [k] of headers.entries()) {
@@ -739,12 +687,6 @@ const deleteHeaderCaseInsensitive = (headers: Headers, name: string) => {
   }
 };
 
-/**
- * Join an upstream base path and a "rest" path segment.
- *
- * basePath:  "/api"   restPath: "/users"   → "/api/users"
- * basePath:  "/"      restPath: "/users"   → "/users"
- */
 const joinUpstreamPath = (basePath: string, restPath: string): string => {
   const b = basePath === "" ? "/" : basePath;
   const bNorm = b.endsWith("/") ? b.slice(0, -1) : b;
@@ -754,9 +696,6 @@ const joinUpstreamPath = (basePath: string, restPath: string): string => {
   return `${bNorm}${rNorm}`;
 };
 
-/**
- * Build ProxyRoute[] from a declarative manifest.
- */
 export function buildProxyRoutesFromManifest<
   State,
   Vars extends VarsRecord,
@@ -883,13 +822,6 @@ export function buildProxyRoutesFromManifest<
   });
 }
 
-/**
- * High-level convenience: build routes from a manifest and create
- * a proxy middleware in one call.
- *
- * All safety options from HttpProxyOptions remain available, except
- * `routes` (which is derived from the manifest).
- */
 export function httpProxyFromManifest<State, Vars extends VarsRecord>(
   manifest: ProxyManifestRoute<State, Vars>[],
   opts?: Omit<HttpProxyOptions<State, Vars>, "routes">,

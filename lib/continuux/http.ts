@@ -137,6 +137,93 @@ export const methodNotAllowed = (path: string, allow: string) =>
     { allow },
   );
 
+export type HttpTransformContext<State, Vars extends VarsRecord> =
+  & HandlerCtx<string, State, Vars>
+  & {
+    // The *already-computed* downstream response.
+    response: Response;
+  };
+
+export type HttpTransformResult = {
+  body?: string | Uint8Array;
+  headers?: HeadersInit;
+  status?: number;
+};
+
+export type HttpTransform<State, Vars extends VarsRecord> = (
+  ctx: HttpTransformContext<State, Vars>,
+) =>
+  | HttpTransformResult
+  | null
+  | undefined
+  | Promise<HttpTransformResult | null | undefined>;
+
+export async function applyTransforms<State, Vars extends VarsRecord>(
+  ctx: HttpTransformContext<State, Vars>,
+  transforms: HttpTransform<State, Vars>[],
+) {
+  if (transforms.length === 0) return ctx.response;
+
+  let current = ctx.response;
+  let bodyText: string | Uint8Array | null = null;
+
+  // Lazy-read body only if a transform asks for it.
+  const readBodyIfNeeded = async () => {
+    if (bodyText != null) return bodyText;
+    if (current.bodyUsed) return null;
+    const ct = current.headers.get("content-type") ?? "";
+    if (/\btext\/|\/json\b/i.test(ct)) {
+      bodyText = await current.text();
+    } else {
+      bodyText = new Uint8Array(await current.arrayBuffer());
+    }
+    return bodyText;
+  };
+
+  for (const t of transforms) {
+    const ctxWithRes: HttpTransformContext<State, Vars> = {
+      ...(ctx as HandlerCtx<string, State, Vars>),
+      response: current,
+    };
+
+    const result = await t(ctxWithRes);
+    if (!result) continue;
+
+    const nextHeaders = new Headers(current.headers);
+    if (result.headers) {
+      for (const [k, v] of Object.entries(result.headers)) {
+        nextHeaders.set(k, v as string);
+      }
+    }
+
+    let nextBody: BodyInit | null = null;
+
+    if (result.body != null) {
+      const b = result.body;
+      nextBody = typeof b === "string" ? b : (b as unknown as BodyInit);
+    } else {
+      // If no body override was provided, try to preserve existing body.
+      // If it is already consumed, we leave it null (most layout transforms
+      // will override body explicitly anyway).
+      if (!current.bodyUsed) {
+        const originalBody = await readBodyIfNeeded();
+        if (originalBody != null) {
+          nextBody = typeof originalBody === "string"
+            ? originalBody
+            : originalBody as unknown as BodyInit;
+        }
+      }
+    }
+
+    const status = result.status ?? current.status;
+    nextHeaders.delete("content-length");
+
+    current = new Response(nextBody, { status, headers: nextHeaders });
+  }
+
+  return current;
+}
+
 /* =========================
  * small internal helpers
  * ========================= */

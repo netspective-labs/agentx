@@ -17,6 +17,7 @@
 // - requireHttpsUpstream and allowedUpstreamHosts validation
 // - maxRequestBodyBytes guard
 // - onNoMatch fallback when no proxy route matches
+// - HTML layout transforms using the shared HttpTransform pipeline
 //
 // These tests aim to double as example usage for the proxy APIs.
 
@@ -26,7 +27,12 @@ import {
   httpProxyFromManifest,
   type ProxyManifestRoute,
 } from "./http-proxy.ts";
-import { Application, textResponse, type VarsRecord } from "./http.ts";
+import {
+  Application,
+  type HttpTransform,
+  textResponse,
+  type VarsRecord,
+} from "./http.ts";
 
 // Small helper: run a test with a real HTTP upstream server.
 // The upstream handler is passed to Deno.serve on port 0, and the callback
@@ -483,5 +489,105 @@ Deno.test(
 
     assertEquals(res.status, 404);
     assertEquals(await res.text(), "NO_MATCH GET /bar");
+  },
+);
+
+/**
+ * Synthetic HTML layout transform example:
+ *
+ * - Upstream returns a simple HTML body with <main> content
+ * - Proxy applies a shared HttpTransform that wraps the upstream HTML
+ *   in a site shell (header/footer)
+ * - HEAD is left alone (transform skips non-GET methods)
+ *
+ * This demonstrates how the same HttpTransform style used in fs routes
+ * can be applied to proxied responses.
+ */
+Deno.test(
+  "http-proxy: html layout transform wraps proxied html body",
+  async () => {
+    await withUpstreamServer((_req) => {
+      return new Response("<main>Inner Content</main>", {
+        status: 200,
+        headers: {
+          "content-type": "text/html; charset=utf-8",
+          "x-upstream": "html-fragment",
+        },
+      });
+    }, async (base) => {
+      type State = Record<string, unknown>;
+      type Vars = VarsRecord;
+
+      const layoutTransform: HttpTransform<State, Vars> = async (ctx) => {
+        // Only transform GET HTML responses; skip others.
+        if (ctx.req.method.toUpperCase() !== "GET") return null;
+
+        const ct = ctx.response.headers.get("content-type") ?? "";
+        if (!/\btext\/html\b/i.test(ct)) return null;
+
+        const inner = await ctx.response.text();
+        const wrapped = [
+          "<!doctype html>",
+          "<html>",
+          "<head><title>Proxy Layout</title></head>",
+          "<body>",
+          "<header>Shell Header</header>",
+          inner,
+          "<footer>Shell Footer</footer>",
+          "</body>",
+          "</html>",
+        ].join("");
+
+        return {
+          body: wrapped,
+          headers: {
+            "content-type": "text/html; charset=utf-8",
+            "x-layout-transform": "applied",
+          },
+        };
+      };
+
+      const app = Application.sharedState<State, Vars>({} as State);
+
+      app.use(
+        httpProxy<State, Vars>({
+          routes: [
+            {
+              name: "html-layout",
+              match: (c) => c.url.pathname === "/page",
+              target: () => `${base}/page`,
+            },
+          ],
+          transforms: [layoutTransform],
+        }),
+      );
+
+      // GET should be wrapped in the HTML layout.
+      {
+        const req = new Request("http://localhost/page");
+        const res = await app.fetch(req);
+
+        assertEquals(res.status, 200);
+        const text = await res.text();
+
+        assertMatch(text, /<!doctype html>/i);
+        assertMatch(text, /Shell Header/);
+        assertMatch(text, /<main>Inner Content<\/main>/);
+        assertMatch(text, /Shell Footer/);
+
+        // Upstream header should be preserved unless stripped by proxy;
+        // layout transform adds its own header.
+        assertEquals(res.headers.get("x-layout-transform"), "applied");
+      }
+
+      // HEAD should skip the layout transform (per-method guard) and produce no body.
+      {
+        const req = new Request("http://localhost/page", { method: "HEAD" });
+        const res = await app.fetch(req);
+        assertEquals(res.status, 200);
+        const body = await res.text();
+        assertEquals(body, "");
+      }
+    });
   },
 );

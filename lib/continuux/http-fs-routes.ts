@@ -14,8 +14,9 @@
 //   - (group)/file.ext                → route group, excluded from URL
 //   - _internal / .hidden segments    → not routable
 // - Provides a low-level `loader` hook to override the entire response.
-// - Provides a higher-level `transforms` pipeline that can transform file
-//   content just before it is served (best for markdown, TS bundling, etc.).
+// - Provides a higher-level `transforms` pipeline based on HttpTransform,
+//   applied just before the response is returned (good for layouts, bundling,
+//   markdown → HTML, etc.).
 // - Supports optional ETag + Last-Modified based conditional GETs.
 // - Exposes `buildFsRouteManifest` for introspection / docs.
 // - Exposes `tsBundleTransform` for “bundle *.ts to JS” using InMemoryBundler.
@@ -26,8 +27,10 @@ import * as path from "@std/path";
 import { parse as parsePosix } from "@std/path";
 import { InMemoryBundler } from "./bundle.ts";
 import {
+  applyTransforms,
   type HandlerCtx,
   type HttpMethod,
+  type HttpTransform,
   type Middleware,
   textResponse,
   type VarsRecord,
@@ -68,48 +71,6 @@ export type FsRouteMatchInfo = {
 
 export type FsRoutesEtagMode = "weak" | "strong" | false;
 
-const asBodyInit = (body: string | Uint8Array): BodyInit => {
-  return typeof body === "string" ? body : (body as unknown as BodyInit);
-};
-
-/**
- * Content transform pipeline:
- *
- * - `match(info)` decides whether this transform applies for a given file/route.
- * - `transform(...)` receives:
- *    - the typed handler context
- *    - match info
- *    - the raw file content (Uint8Array)
- *    - a pre-populated Headers object (you may mutate it)
- *
- *   and can return:
- *    - a full Response (authoritative; headers/status are taken from it)
- *    - a string or Uint8Array body (headers/status from the base headers)
- *    - an object with { body, headers?, status? }
- *    - null / undefined to “skip” (fall through to next transform or default).
- */
-export type FsTransformReturn =
-  | Response
-  | string
-  | Uint8Array
-  | {
-    body: string | Uint8Array;
-    headers?: HeadersInit;
-    status?: number;
-  }
-  | null
-  | undefined;
-
-export type FsContentTransform<State, Vars extends VarsRecord> = {
-  match: (info: FsRouteMatchInfo) => boolean;
-  transform: (
-    ctx: HandlerCtx<string, State, Vars>,
-    info: FsRouteMatchInfo,
-    content: Uint8Array,
-    baseHeaders: Headers,
-  ) => FsTransformReturn | Promise<FsTransformReturn>;
-};
-
 export type FsRoutesOptions<State, Vars extends VarsRecord> = {
   mounts: FsRoutesMount[];
 
@@ -123,9 +84,16 @@ export type FsRoutesOptions<State, Vars extends VarsRecord> = {
     info: FsRouteMatchInfo,
   ) => Response | null | undefined | Promise<Response | null | undefined>;
 
-  // Content transform pipeline, applied after conditional GET checks and before
-  // default static serving. Only used for GET (HEAD skips transforms).
-  transforms?: FsContentTransform<State, Vars>[];
+  // HttpTransform pipeline run after we’ve constructed the static file Response
+  // (and after conditional GET / 304 logic). Only used for GET. HEAD is not
+  // transformed.
+  //
+  // The transform context includes the usual HandlerCtx plus:
+  //   (ctx as any).fsRoute -> FsRouteMatchInfo
+  //
+  // so transforms that care about file routing can use:
+  //   const fsRoute = (ctx as any).fsRoute as FsRouteMatchInfo | undefined;
+  transforms?: HttpTransform<State, Vars>[];
 
   // Cache headers / conditional GETs.
   cacheControl?: string;
@@ -471,6 +439,8 @@ export function httpFsRoutes<State, Vars extends VarsRecord>(
     if (opts.loader) {
       const override = await opts.loader(ctx, info);
       if (override instanceof Response) {
+        // We deliberately do not run transforms on loader overrides; if you
+        // want that, you can call applyTransforms inside your loader.
         return override;
       }
     }
@@ -512,52 +482,30 @@ export function httpFsRoutes<State, Vars extends VarsRecord>(
       return new Response(null, { status: 304, headers });
     }
 
-    // HEAD: no body, but headers should still be set.
+    // HEAD: no body, but headers should still be set. We intentionally skip
+    // transforms for HEAD to avoid pointless body reads.
     if (method === "HEAD") {
       return new Response(null, { status: 200, headers });
     }
 
-    // GET with optional content transforms.
+    // Default GET: read the file and then optionally run HttpTransform(s).
+    const body = await Deno.readFile(match.filePath);
+    let res = new Response(body, { status: 200, headers });
+
     const transforms = opts.transforms ?? [];
     if (transforms.length > 0) {
-      const content = await Deno.readFile(match.filePath);
+      // Enrich the transform context with fsRoute so FS-aware transforms
+      // (e.g. tsBundleTransform) can access routing metadata.
+      const tctx = {
+        ...(ctx as HandlerCtx<string, State, Vars>),
+        response: res,
+        fsRoute: info,
+      };
 
-      for (const t of transforms) {
-        if (!t.match(info)) continue;
-
-        const result = await t.transform(ctx, info, content, headers);
-        if (result == null) continue;
-
-        if (result instanceof Response) {
-          // Transform is authoritative about headers/status/body.
-          return result;
-        }
-
-        if (typeof result === "string" || result instanceof Uint8Array) {
-          return new Response(asBodyInit(result), { status: 200, headers });
-        }
-
-        const body = result.body;
-        const merged = new Headers(headers);
-        if (result.headers) {
-          for (const [k, v] of Object.entries(result.headers)) {
-            if (v == null) continue;
-            merged.set(k, Array.isArray(v) ? v.join(", ") : String(v));
-          }
-        }
-        const status = result.status ?? 200;
-        return new Response(asBodyInit(body), { status, headers: merged });
-      }
-
-      // No transform matched; fall through to static serving with the same
-      // already-read content.
-      return new Response(content, { status: 200, headers });
+      res = await applyTransforms<State, Vars>(tctx, transforms);
     }
 
-    // Default static serving: simple readFile. For this module's purposes,
-    // streaming is not critical, and readFile keeps the code simple.
-    const body = await Deno.readFile(match.filePath);
-    return new Response(body, { status: 200, headers });
+    return res;
   };
 }
 
@@ -580,7 +528,8 @@ export type TsBundleTransformConfig = {
 };
 
 /**
- * A content transform that:
+ * A HttpTransform that:
+ * - Only runs when there is FsRouteMatchInfo on the context.
  * - Matches `*.ts` files (by default).
  * - Uses InMemoryBundler to bundle them as browser JS modules.
  * - Serves the resulting JS with `text/javascript` and `no-store` (by default).
@@ -598,27 +547,41 @@ export type TsBundleTransformConfig = {
  */
 export function tsBundleTransform<State, Vars extends VarsRecord>(
   cfg: TsBundleTransformConfig = {},
-): FsContentTransform<State, Vars> {
+): HttpTransform<State, Vars> {
   const bundler = cfg.bundler ?? new InMemoryBundler({
     defaultMinify: cfg.minify ?? false,
   });
   const matchFn = cfg.match ??
     ((info: FsRouteMatchInfo) => info.ext === ".ts");
 
-  return {
-    match: (info) => matchFn(info),
-    transform: async (_ctx, info, _content, _baseHeaders) => {
-      const entry = info.filePath;
-      const cacheKey = cfg.cacheKey?.(info) ?? entry;
-      const cacheControl = cfg.cacheControl ?? "no-store";
+  return async (ctx) => {
+    // deno-lint-ignore no-explicit-any
+    const fsRoute = (ctx as any).fsRoute as FsRouteMatchInfo | undefined;
+    if (!fsRoute) return null;
+    if (!matchFn(fsRoute)) return null;
 
-      // We lean on jsModuleResponse, which already returns a well-formed JS
-      // module Response with appropriate content-type.
-      return await bundler.jsModuleResponse(entry, {
-        cacheKey,
-        minify: cfg.minify,
-        cacheControl,
-      });
-    },
+    const entry = fsRoute.filePath;
+    const cacheKey = cfg.cacheKey?.(fsRoute) ?? entry;
+    const cacheControl = cfg.cacheControl ?? "no-store";
+
+    // Let the bundler produce a JS Response, then convert that into a
+    // HttpTransformResult (body + headers + status) for applyTransforms.
+    const jsRes = await bundler.jsModuleResponse(entry, {
+      cacheKey,
+      minify: cfg.minify,
+      cacheControl,
+    });
+
+    const jsText = await jsRes.text();
+    const outHeaders: Record<string, string> = {};
+    jsRes.headers.forEach((v, k) => {
+      outHeaders[k] = v;
+    });
+
+    return {
+      body: jsText,
+      headers: outHeaders,
+      status: jsRes.status,
+    };
   };
 }

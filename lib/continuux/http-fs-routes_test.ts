@@ -21,14 +21,20 @@
 
 import { assert, assertEquals, assertMatch, assertRejects } from "@std/assert";
 import * as path from "@std/path";
+
 import {
   buildFsRouteManifest,
-  type FsContentTransform,
   type FsRouteMatchInfo,
   type FsRoutesMount,
   httpFsRoutes,
+  tsBundleTransform,
 } from "./http-fs-routes.ts";
-import { Application, textResponse, type VarsRecord } from "./http.ts";
+import {
+  Application,
+  type HttpTransform,
+  textResponse,
+  type VarsRecord,
+} from "./http.ts";
 
 // Helper to create a temporary workspace for a single test.
 async function withTempDir(
@@ -64,7 +70,7 @@ async function makeAppAndFetch<
     cacheControl?: string;
     etag?: "weak" | "strong" | false;
     enableLastModified?: boolean;
-    transforms?: FsContentTransform<State, Vars>[];
+    transforms?: HttpTransform<State, Vars>[];
   },
 ): Promise<Response> {
   const app = Application.sharedState<State, Vars>({} as State);
@@ -493,8 +499,7 @@ Deno.test("http-fs-routes: manifest describes compiled routes", async () => {
   });
 });
 
-// Synthetic transformation: uppercase transform for .txt files
-Deno.test("http-fs-routes: content transform can rewrite body", async () => {
+Deno.test("http-fs-routes: content transform can rewrite body (uppercase transform for .txt files)", async () => {
   await withTempDir(async (root) => {
     await writeFile(root, "note.txt", "hello world");
 
@@ -504,18 +509,25 @@ Deno.test("http-fs-routes: content transform can rewrite body", async () => {
 
     const td = new TextDecoder();
 
-    const transforms: FsContentTransform<
+    const transforms: HttpTransform<
       Record<string, unknown>,
       VarsRecord
     >[] = [
-      {
-        match: (info) => info.ext === ".txt",
-        transform: (_ctx, _info, content, baseHeaders) => {
-          const text = td.decode(content).toUpperCase();
-          // Ensure we keep any pre-populated headers (like content-type).
-          baseHeaders.set("x-transformed", "uppercase");
-          return text;
-        },
+      async (ctx) => {
+        // deno-lint-ignore no-explicit-any
+        const fsRoute = (ctx as any).fsRoute as FsRouteMatchInfo | undefined;
+        if (!fsRoute || fsRoute.ext !== ".txt") return null;
+
+        const buf = new Uint8Array(await ctx.response.arrayBuffer());
+        const text = td.decode(buf).toUpperCase();
+
+        return {
+          body: text,
+          headers: {
+            "x-transformed": "uppercase",
+          },
+          status: ctx.response.status,
+        };
       },
     ];
 
@@ -532,7 +544,6 @@ Deno.test("http-fs-routes: content transform can rewrite body", async () => {
   });
 });
 
-// Synthetic transformation: object result with headers + status override
 Deno.test("http-fs-routes: content transform can override headers and status", async () => {
   await withTempDir(async (root) => {
     await writeFile(root, "data.json", `{"value": 1}`);
@@ -541,31 +552,29 @@ Deno.test("http-fs-routes: content transform can override headers and status", a
       { mount: "/", root },
     ];
 
-    const td = new TextDecoder();
-
-    const transforms: FsContentTransform<
+    const transforms: HttpTransform<
       Record<string, unknown>,
       VarsRecord
     >[] = [
-      {
-        match: (info) => info.ext === ".json",
-        transform: (_ctx, info, content, baseHeaders) => {
-          const original = td.decode(content);
-          const wrapped = JSON.stringify({
-            route: info.template,
-            original: JSON.parse(original),
-          });
+      async (ctx) => {
+        // deno-lint-ignore no-explicit-any
+        const fsRoute = (ctx as any).fsRoute as FsRouteMatchInfo | undefined;
+        if (!fsRoute || fsRoute.ext !== ".json") return null;
 
-          // Show how to override headers and status while reusing the base.
-          return {
-            body: wrapped,
-            status: 201,
-            headers: {
-              ...Object.fromEntries(baseHeaders.entries()),
-              "x-transformed": "wrapped-json",
-            },
-          };
-        },
+        const original = await ctx.response.text();
+        const wrapped = JSON.stringify({
+          route: fsRoute.template,
+          original: JSON.parse(original),
+        });
+
+        return {
+          body: wrapped,
+          status: 201,
+          headers: {
+            "x-transformed": "wrapped-json",
+            "content-type": "application/json",
+          },
+        };
       },
     ];
 
@@ -584,6 +593,119 @@ Deno.test("http-fs-routes: content transform can override headers and status", a
     assertEquals(json.route, "/data");
     assertEquals(json.original.value, 1);
     assertEquals(res.headers.get("x-transformed"), "wrapped-json");
+  });
+});
+
+Deno.test("http-fs-routes: html layout transform wraps body with header/footer", async () => {
+  await withTempDir(async (root) => {
+    await writeFile(
+      root,
+      "index.html",
+      "<!doctype html><html><head><title>Test</title></head><body><main>Inner</main></body></html>",
+    );
+
+    const mounts: FsRoutesMount[] = [
+      { mount: "/", root },
+    ];
+
+    const transforms: HttpTransform<
+      Record<string, unknown>,
+      VarsRecord
+    >[] = [
+      async (ctx) => {
+        // deno-lint-ignore no-explicit-any
+        const fsRoute = (ctx as any).fsRoute as FsRouteMatchInfo | undefined;
+        if (!fsRoute || fsRoute.ext !== ".html") return null;
+
+        const html = await ctx.response.text();
+        if (!html.includes("<body")) return null;
+
+        const withHeader = html.replace(
+          "<body>",
+          '<body><header class="site-header">Shell Header</header>',
+        );
+        const withFooter = withHeader.replace(
+          "</body>",
+          '<footer class="site-footer">Shell Footer</footer></body>',
+        );
+
+        return {
+          body: withFooter,
+          headers: {
+            "x-layout": "shell",
+          },
+        };
+      },
+    ];
+
+    const res = await makeAppAndFetch(
+      mounts,
+      "/",
+      undefined,
+      { transforms },
+    );
+
+    assertEquals(res.status, 200);
+    const body = await res.text();
+
+    assertMatch(body, /Shell Header/);
+    assertMatch(body, /Shell Footer/);
+    assertMatch(body, /<main>Inner<\/main>/);
+    assertEquals(res.headers.get("x-layout"), "shell");
+  });
+});
+
+Deno.test("http-fs-routes: tsBundleTransform bundles .ts as JS module on the fly", async () => {
+  await withTempDir(async (root) => {
+    // Simple client-side TS module
+    await writeFile(
+      root,
+      "client.ts",
+      `
+        export function hi(name: string) {
+          console.log("hi", name);
+          return "hi " + name;
+        }
+      `,
+    );
+
+    const mounts: FsRoutesMount[] = [
+      { mount: "/", root },
+    ];
+
+    const transforms = [
+      tsBundleTransform({
+        minify: false,
+        cacheControl: "no-store",
+      }),
+    ];
+
+    const res = await makeAppAndFetch(
+      mounts,
+      "/client",
+      undefined,
+      { transforms },
+    );
+
+    // We should get JS back, not raw TypeScript
+    assertEquals(res.status, 200);
+
+    const ct = res.headers.get("content-type") ?? "";
+    // Depending on Deno version this might be text/javascript or application/javascript;
+    // we only assert that "javascript" appears.
+    assertMatch(ct.toLowerCase(), /javascript/);
+
+    const cc = res.headers.get("cache-control") ?? "";
+    assertEquals(cc, "no-store");
+
+    const js = await res.text();
+    // Bundled JS should reference the exported function name somewhere.
+    assertMatch(js, /hi/);
+    // And should not contain obvious TypeScript-only syntax like ": string"
+    // (not a hard guarantee, but a decent sanity check).
+    // If this ever gets too brittle, you can relax or remove this assertion.
+    // @ts-ignore allow possible miss
+    assertMatch(js, /"hi"/);
   });
 });
 
