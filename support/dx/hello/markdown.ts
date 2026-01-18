@@ -56,6 +56,11 @@ const pageHtml = (): string => {
         }),
         H.title("ContinuUX Hello Markdown"),
         H.link({ rel: "stylesheet", href: picoHref }),
+        H.style(`
+          :root {
+            font-size: 85%;
+          }
+        `),
       ),
       H.body(
         H.main(
