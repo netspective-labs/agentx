@@ -1,67 +1,23 @@
 /**
- * @module lib/universal/fluent-ds-sematic.ts
+ * @module lib/universal/fluent-ds-enterprise.ts
  *
- * A small “semantic design system” layer for building consistent page layouts and
- * regions (header, sidebar, content, right rail, footer) on top of `fluent-html.ts`
- * (HAST-native).
- *
- * What a design system is
- * A design system is a reusable set of layout primitives, component patterns, and
- * conventions that help a team produce consistent UI. In this module, the “system”
- * is expressed as:
- * - region composers (header/sidebar/content/rightRail/footer) that wrap semantic tags
- * - typed variant registries (e.g. header.basic, sidebar.nav) that render consistent markup
- * - predictable class naming hooks (ds-*) for styling via CSS
- *
- * What “semantic” means (HTML sense)
- * “Semantic” means using elements that describe meaning and document structure,
- * not just appearance. This module prefers tags like `<header>`, `<nav>`, `<main>`,
- * `<aside>`, `<footer>`, `<section>`, plus ARIA labeling where appropriate.
- * The goal is better accessibility, clearer structure for tooling, and more reliable
- * styling and automation.
- *
- * HAST-native output model
- * Everything produced is `RawHtml` from `fluent-html.ts`, which carries real HAST nodes
- * (via `__nodes`). This avoids inventing a parallel AST. For “fragments” (groups of nodes),
- * `fragment()` wraps children in `<template>` so the result remains a concrete, deterministic
- * HAST subtree without needing a non-HAST fragment node.
- *
- * How to use it
- * - Use `defaultDesignSystem` or create your own with `createDesignSystem()` to add/override
- *   region variants.
- * - Use `semanticLayout()` to emit a full document (doctype + html/head/body) with asset dependencies.
- * - Inside your `shell()` callback, compose regions with `ds.<region>.use(<variant>, opts, init?)`
- *   or `ds.<region>.wrap(init, children)` when you want direct control.
- *
- * Minimal example
- * ```ts
- * import { semanticLayout, defaultDesignSystem as ds, renderPretty } from "./fluent-ds-sematic.ts";
- *
- * const page = semanticLayout({
- *   title: "My App",
- *   shell: ({ header, sidebar, content, rightRail, footer }) => ({
- *     header: header.use("basic", { title: "My App" }),
- *     sidebar: sidebar.use("nav", { title: "Menu", items: [{ label: "Home", href: "/", active: true }] }),
- *     content: content.use("standard", { pageTitle: "Dashboard", body: "Hello" }),
- *     rightRail: rightRail.use("empty", {}),
- *     footer: footer.use("basic", { smallPrint: "© 2026" }),
- *   }),
- * }, ds);
- *
- * console.log(renderPretty(page.html));
- * ```
- *
- * Extending variants
- * `createDesignSystem({ header: { ... }, sidebar: { ... } })` lets you register new variants
- * per region with strong typing, while keeping the built-in ones available.
+ * Enterprise design system primitives derived from support/rfc/design-system-spec.md.
+ * This module provides semantic layout regions (header, sidebar, content, right rail, footer)
+ * with typed variants for enterprise app shells.
  */
-import type { Attrs, Child, ClassSpec, RawHtml } from "./fluent-html.ts";
+import type {
+  Attrs,
+  Child,
+  ClassSpec,
+  RawHtml,
+} from "../universal/fluent-html.ts";
 
 import {
   a,
   aside,
   attrs,
   body,
+  button,
   classNames,
   div,
   doctype,
@@ -69,21 +25,24 @@ import {
   head,
   header,
   html,
+  label,
   li,
   link,
   main,
   meta,
   nav,
   ol,
+  option,
   p,
   render,
   renderPretty,
   section,
+  select,
   span,
   title,
   trustedRaw,
   ul,
-} from "./fluent-html.ts";
+} from "../universal/fluent-html.ts";
 
 /* ------------------------------ Basic types ------------------------------ */
 
@@ -97,10 +56,6 @@ function asKids(k: DsChild | DsChild[] | undefined): DsChild[] {
   return Array.isArray(k) ? k : [k];
 }
 
-/**
- * Concatenate RawHtml node-lists without introducing a wrapper element.
- * Useful for doctype + html as siblings.
- */
 function concatRaw(...chunks: RawHtml[]): RawHtml {
   return {
     __rawHtml: "",
@@ -108,10 +63,6 @@ function concatRaw(...chunks: RawHtml[]): RawHtml {
   } as RawHtml;
 }
 
-/**
- * Fragment helper that preserves a concrete HAST node list by using `<template>`.
- * Children are preserved; `renderPretty` will show them.
- */
 export const fragment = (...children: DsChild[]): DsHtml =>
   trustedRaw(
     `<template>${
@@ -166,10 +117,35 @@ export interface BreadcrumbItem {
   href?: string;
 }
 
-export interface NavItem {
+export interface HeaderBrand {
+  appName: string;
+  logo?: DsChild;
+  href?: string;
+  environment?: string;
+}
+
+export interface HeaderNavItem {
   label: string;
   href: string;
   active?: boolean;
+}
+
+export interface SidebarSubject {
+  id: string;
+  label: string;
+  active?: boolean;
+}
+
+export interface SidebarNavItem {
+  label: string;
+  href: string;
+  active?: boolean;
+}
+
+export interface SidebarSection {
+  id: string;
+  label: string;
+  items: SidebarNavItem[];
 }
 
 export interface FooterLink {
@@ -177,8 +153,23 @@ export interface FooterLink {
   href: string;
 }
 
+export interface FooterStatus {
+  label: string;
+  value: string;
+  tone?: "success" | "warning" | "info" | "muted";
+}
+
+export interface RightRailSection {
+  id: string;
+  label: string;
+  href?: string;
+  active?: boolean;
+}
+
 export interface HeaderApi {
-  title: (t: string, init?: { class?: string }) => DsHtml;
+  menuToggle: (labelText?: string, init?: { class?: string }) => DsHtml;
+  brand: (info: HeaderBrand, init?: { class?: string }) => DsHtml;
+  nav: (items: HeaderNavItem[], init?: { class?: string }) => DsHtml;
   actions: (children: DsChild | DsChild[], init?: { class?: string }) => DsHtml;
   breadcrumbs: (items: BreadcrumbItem[], init?: { class?: string }) => DsHtml;
 
@@ -187,8 +178,13 @@ export interface HeaderApi {
 }
 
 export interface SidebarApi {
+  subjectSelector: (
+    subjects: SidebarSubject[],
+    init?: { label?: string; class?: string },
+  ) => DsHtml;
   sectionTitle: (t: string, init?: { class?: string }) => DsHtml;
-  navList: (items: NavItem[], init?: { class?: string }) => DsHtml;
+  navList: (items: SidebarNavItem[], init?: { class?: string }) => DsHtml;
+  navSection: (sectionDef: SidebarSection, init?: { class?: string }) => DsHtml;
 
   cls: (...parts: ClassSpec[]) => string;
   attrs: (...parts: Array<Attrs | null | undefined | false>) => Attrs;
@@ -214,6 +210,10 @@ export interface ContentApi {
 }
 
 export interface RightRailApi {
+  sectionNav: (
+    items: RightRailSection[],
+    init?: { title?: string; class?: string },
+  ) => DsHtml;
   panel: (
     init: { title?: string; class?: string },
     children: DsChild | DsChild[],
@@ -225,6 +225,8 @@ export interface RightRailApi {
 
 export interface FooterApi {
   links: (items: FooterLink[], init?: { class?: string }) => DsHtml;
+  status: (items: FooterStatus[], init?: { class?: string }) => DsHtml;
+  version: (t: string, init?: { class?: string }) => DsHtml;
   smallPrint: (t: string, init?: { class?: string }) => DsHtml;
 
   cls: (...parts: ClassSpec[]) => string;
@@ -236,19 +238,30 @@ export interface FooterApi {
 export type EmptyObject = Record<PropertyKey, never>;
 
 export type HeaderVariants = {
-  basic: VariantFn<
+  enterprise: VariantFn<
     HeaderApi,
     {
-      title?: string;
-      breadcrumbs?: BreadcrumbItem[];
+      brand: HeaderBrand;
+      nav?: HeaderNavItem[];
       actions?: DsChild | DsChild[];
+      breadcrumbs?: BreadcrumbItem[];
+      menuToggleLabel?: string;
     }
   >;
   minimal: VariantFn<HeaderApi, { title?: string }>;
 };
 
 export type SidebarVariants = {
-  nav: VariantFn<SidebarApi, { items: NavItem[]; title?: string }>;
+  enterprise: VariantFn<
+    SidebarApi,
+    {
+      title?: string;
+      subjects?: SidebarSubject[];
+      sections: SidebarSection[];
+      footer?: DsChild | DsChild[];
+      collapsed?: boolean;
+    }
+  >;
   empty: VariantFn<SidebarApi, EmptyObject>;
 };
 
@@ -265,12 +278,24 @@ export type ContentVariants = {
 };
 
 export type RightRailVariants = {
+  sections: VariantFn<
+    RightRailApi,
+    { title?: string; items: RightRailSection[]; body?: DsChild | DsChild[] }
+  >;
   panel: VariantFn<RightRailApi, { title?: string; body: DsChild | DsChild[] }>;
   empty: VariantFn<RightRailApi, EmptyObject>;
 };
 
 export type FooterVariants = {
-  basic: VariantFn<FooterApi, { links?: FooterLink[]; smallPrint?: string }>;
+  enterprise: VariantFn<
+    FooterApi,
+    {
+      links?: FooterLink[];
+      status?: FooterStatus[];
+      version?: string;
+      smallPrint?: string;
+    }
+  >;
   empty: VariantFn<FooterApi, EmptyObject>;
 };
 
@@ -319,7 +344,7 @@ function makeRegionComposer<Api, V extends VariantRegistry<Api>>(args: {
 
   const wrap = (init: RegionInit, kids: DsChild | DsChild[]) => {
     const a = at(
-      { class: c(`ds-${args.regionName}`, init.class) },
+      { class: c(`eds-${args.regionName}`, init.class) },
       init.attrs,
       init.ariaLabel ? { "aria-label": init.ariaLabel } : undefined,
     );
@@ -341,7 +366,7 @@ function makeRegionComposer<Api, V extends VariantRegistry<Api>>(args: {
   return { wrap, use, variants: args.variants, cls: c, attrs: at };
 }
 
-export function createDesignSystem<
+export function createEnterpriseDesignSystem<
   Ext extends DesignSystemExtensions = Record<PropertyKey, never>,
 >(
   ext?: Ext,
@@ -376,20 +401,61 @@ export function createDesignSystem<
   const c = (...p: ClassSpec[]) => classNames(...p);
 
   const headerApi: HeaderApi = {
-    title: (t, init) => span({ class: c("ds-header-title", init?.class) }, t),
+    menuToggle: (labelText = "Toggle navigation", init) =>
+      button(
+        {
+          class: c("eds-menu-toggle", init?.class),
+          type: "button",
+          "aria-label": labelText,
+        },
+        span({ class: "eds-menu-toggle-icon" }, "Menu"),
+      ),
+    brand: (info, init) => {
+      const nodes: DsChild[] = [];
+      if (info.logo) nodes.push(span({ class: "eds-brand-mark" }, info.logo));
+      nodes.push(span({ class: "eds-brand-name" }, info.appName));
+      if (info.environment) {
+        nodes.push(span({ class: "eds-env-badge" }, info.environment));
+      }
+      return info.href
+        ? a({ href: info.href, class: c("eds-brand", init?.class) }, ...nodes)
+        : span({ class: c("eds-brand", init?.class) }, ...nodes);
+    },
+    nav: (items, init) =>
+      nav(
+        { class: c("eds-header-nav", init?.class) },
+        ul(
+          { class: "eds-header-nav-list" },
+          items.map((item) =>
+            li(
+              { class: c("eds-header-nav-item", item.active && "is-active") },
+              a(
+                {
+                  href: item.href,
+                  "aria-current": item.active ? "page" : undefined,
+                },
+                item.label,
+              ),
+            )
+          ),
+        ),
+      ),
     actions: (kids, init) =>
-      section({ class: c("ds-header-actions", init?.class) }, ...asKids(kids)),
+      section(
+        { class: c("eds-header-actions", init?.class) },
+        ...asKids(kids),
+      ),
     breadcrumbs: (items, init) =>
       nav(
         {
-          class: c("ds-breadcrumbs", init?.class),
+          class: c("eds-breadcrumbs", init?.class),
           "aria-label": "Breadcrumbs",
         },
         ol(
-          { class: "ds-breadcrumbs-list" },
+          { class: "eds-breadcrumbs-list" },
           items.map((it) =>
             li(
-              { class: "ds-breadcrumbs-item" },
+              { class: "eds-breadcrumbs-item" },
               it.href ? a({ href: it.href }, it.label) : span(it.label),
             )
           ),
@@ -400,14 +466,33 @@ export function createDesignSystem<
   };
 
   const sidebarApi: SidebarApi = {
+    subjectSelector: (subjects, init) =>
+      section(
+        { class: c("eds-sidebar-subject", init?.class) },
+        init?.label
+          ? label({ class: "eds-sidebar-subject-label" }, init.label)
+          : "",
+        select(
+          { class: "eds-sidebar-subject-select" },
+          subjects.map((subject) =>
+            option(
+              {
+                value: subject.id,
+                selected: subject.active ? true : undefined,
+              },
+              subject.label,
+            )
+          ),
+        ),
+      ),
     sectionTitle: (t, init) =>
-      span({ class: c("ds-sidebar-title", init?.class) }, t),
+      span({ class: c("eds-sidebar-title", init?.class) }, t),
     navList: (items, init) =>
       ul(
-        { class: c("ds-nav-list", init?.class) },
+        { class: c("eds-nav-list", init?.class) },
         items.map((it) =>
           li(
-            { class: c("ds-nav-item", it.active && "is-active") },
+            { class: c("eds-nav-item", it.active && "is-active") },
             a(
               {
                 href: it.href,
@@ -418,6 +503,20 @@ export function createDesignSystem<
           )
         ),
       ),
+    navSection: (sectionDef, init) =>
+      section(
+        { class: c("eds-sidebar-section", init?.class) },
+        sectionDef.label
+          ? header(
+            { class: "eds-sidebar-section-header" },
+            span(sectionDef.label),
+          )
+          : "",
+        section(
+          { class: "eds-sidebar-section-body" },
+          sidebarApi.navList(sectionDef.items),
+        ),
+      ),
     cls: c,
     attrs: at,
   };
@@ -425,41 +524,68 @@ export function createDesignSystem<
   const contentApi: ContentApi = {
     pageHeader: (t, init) =>
       header(
-        { class: c("ds-page-header", init?.class) },
+        { class: c("eds-page-header", init?.class) },
         section(
-          { class: "ds-page-header-text" },
-          span({ class: "ds-page-title" }, t),
+          { class: "eds-page-header-text" },
+          span({ class: "eds-page-title" }, t),
           init?.description
             ? section(
-              { class: "ds-page-description" },
+              { class: "eds-page-description" },
               ...asKids(init.description),
             )
             : "",
         ),
         init?.actions
-          ? section({ class: "ds-page-actions" }, ...asKids(init.actions))
+          ? section({ class: "eds-page-actions" }, ...asKids(init.actions))
           : "",
       ),
     contentSection: (init, kids) =>
       section(
-        { class: c("ds-section", init.class) },
+        { class: c("eds-section", init.class) },
         init.title
-          ? header({ class: "ds-section-header" }, span(init.title))
+          ? header({ class: "eds-section-header" }, span(init.title))
           : "",
-        section({ class: "ds-section-body" }, ...asKids(kids)),
+        section({ class: "eds-section-body" }, ...asKids(kids)),
       ),
     cls: c,
     attrs: at,
   };
 
   const rightRailApi: RightRailApi = {
+    sectionNav: (items, init) =>
+      section(
+        { class: c("eds-rail-nav", init?.class) },
+        init?.title
+          ? header({ class: "eds-rail-nav-header" }, span(init.title))
+          : "",
+        nav(
+          { class: "eds-rail-nav-body", "aria-label": "On this page" },
+          ul(
+            { class: "eds-rail-nav-list" },
+            items.map((item) =>
+              li(
+                { class: c("eds-rail-nav-item", item.active && "is-active") },
+                item.href
+                  ? a(
+                    {
+                      href: item.href,
+                      "aria-current": item.active ? "location" : undefined,
+                    },
+                    item.label,
+                  )
+                  : span(item.label),
+              )
+            ),
+          ),
+        ),
+      ),
     panel: (init, kids) =>
       section(
-        { class: c("ds-rail-panel", init.class) },
+        { class: c("eds-rail-panel", init.class) },
         init.title
-          ? header({ class: "ds-rail-panel-header" }, span(init.title))
+          ? header({ class: "eds-rail-panel-header" }, span(init.title))
           : "",
-        section({ class: "ds-rail-panel-body" }, ...asKids(kids)),
+        section({ class: "eds-rail-panel-body" }, ...asKids(kids)),
       ),
     cls: c,
     attrs: at,
@@ -469,77 +595,119 @@ export function createDesignSystem<
     links: (items, init) =>
       nav(
         {
-          class: c("ds-footer-links", init?.class),
+          class: c("eds-footer-links", init?.class),
           "aria-label": "Footer links",
         },
         ul(
-          { class: "ds-footer-links-list" },
+          { class: "eds-footer-links-list" },
           items.map((it) =>
             li(
-              { class: "ds-footer-links-item" },
+              { class: "eds-footer-links-item" },
               a({ href: it.href }, it.label),
             )
           ),
         ),
       ),
+    status: (items, init) =>
+      section(
+        { class: c("eds-footer-status", init?.class) },
+        items.map((item) =>
+          span(
+            { class: c("eds-status-pill", item.tone && `is-${item.tone}`) },
+            `${item.label}: ${item.value}`,
+          )
+        ),
+      ),
+    version: (t, init) =>
+      span({ class: c("eds-footer-version", init?.class) }, t),
     smallPrint: (t, init) =>
-      span({ class: c("ds-footer-smallprint", init?.class) }, t),
+      span({ class: c("eds-footer-smallprint", init?.class) }, t),
     cls: c,
     attrs: at,
   };
 
   const builtInHeader: HeaderVariants = {
-    basic: (api, o) =>
+    enterprise: (api, o) =>
       header(
-        { class: "ds-header-inner" },
-        o.breadcrumbs?.length ? api.breadcrumbs(o.breadcrumbs) : "",
-        o.title ? api.title(o.title) : "",
-        o.actions ? api.actions(o.actions) : "",
+        { class: "eds-header-inner" },
+        section(
+          { class: "eds-header-top" },
+          section(
+            { class: "eds-header-left" },
+            api.menuToggle(o.menuToggleLabel),
+            api.brand(o.brand),
+          ),
+          o.nav?.length ? api.nav(o.nav) : "",
+          o.actions ? api.actions(o.actions) : "",
+        ),
+        o.breadcrumbs?.length
+          ? section(
+            { class: "eds-header-breadcrumbs" },
+            api.breadcrumbs(o.breadcrumbs),
+          )
+          : "",
       ),
-    minimal: (api, o) =>
+    minimal: (_api, o) =>
       header(
-        { class: "ds-header-inner" },
-        o.title ? api.title(o.title) : "",
+        { class: "eds-header-inner" },
+        o.title ? span({ class: "eds-header-title" }, o.title) : "",
       ),
   };
 
   const builtInSidebar: SidebarVariants = {
-    nav: (api, o) =>
+    enterprise: (api, o) =>
       section(
-        { class: "ds-sidebar-inner" },
+        { class: c("eds-sidebar-inner", o.collapsed && "is-collapsed") },
+        o.subjects?.length
+          ? api.subjectSelector(o.subjects, { label: "Subject" })
+          : "",
         o.title ? api.sectionTitle(o.title) : "",
-        api.navList(o.items),
+        o.sections.map((sectionDef) => api.navSection(sectionDef)),
+        o.footer
+          ? section(
+            { class: "eds-sidebar-footer" },
+            ...asKids(o.footer),
+          )
+          : "",
       ),
-    empty: () => section({ class: "ds-sidebar-inner" }),
+    empty: () => section({ class: "eds-sidebar-inner" }),
   };
 
   const builtInContent: ContentVariants = {
     standard: (api, o) =>
       section(
-        { class: "ds-content-inner" },
+        { class: "eds-content-inner" },
         o.pageTitle
           ? api.pageHeader(o.pageTitle, {
             description: o.description,
             actions: o.actions,
           })
           : "",
-        section({ class: "ds-content-body" }, ...asKids(o.body)),
+        section({ class: "eds-content-body" }, ...asKids(o.body)),
       ),
   };
 
   const builtInRightRail: RightRailVariants = {
+    sections: (api, o) =>
+      section(
+        { class: "eds-rail-inner" },
+        api.sectionNav(o.items, { title: o.title }),
+        o.body ? section({ class: "eds-rail-body" }, ...asKids(o.body)) : "",
+      ),
     panel: (api, o) => api.panel({ title: o.title }, o.body),
-    empty: () => section({ class: "ds-rail-empty" }),
+    empty: () => section({ class: "eds-rail-empty" }),
   };
 
   const builtInFooter: FooterVariants = {
-    basic: (api, o) =>
+    enterprise: (api, o) =>
       section(
-        { class: "ds-footer-inner" },
+        { class: "eds-footer-inner" },
         o.links?.length ? api.links(o.links) : "",
+        o.status?.length ? api.status(o.status) : "",
+        o.version ? api.version(o.version) : "",
         o.smallPrint ? api.smallPrint(o.smallPrint) : "",
       ),
-    empty: () => section({ class: "ds-footer-empty" }),
+    empty: () => section({ class: "eds-footer-empty" }),
   };
 
   const headerVariants = {
@@ -621,8 +789,9 @@ export function createDesignSystem<
   };
 }
 
-export const defaultDesignSystem = createDesignSystem();
-export type DefaultDesignSystem = typeof defaultDesignSystem;
+export const defaultEnterpriseDesignSystem = createEnterpriseDesignSystem();
+export type DefaultEnterpriseDesignSystem =
+  typeof defaultEnterpriseDesignSystem;
 
 /* --------------------------------- Layout -------------------------------- */
 
@@ -658,7 +827,9 @@ export interface HeadApi {
   attrs: (...parts: Array<Attrs | null | undefined | false>) => Attrs;
 }
 
-export interface LayoutInit<DS extends AnyDesignSystem = DefaultDesignSystem> {
+export interface LayoutInit<
+  DS extends AnyDesignSystem = DefaultEnterpriseDesignSystem,
+> {
   variant?: LayoutVariant;
   lang?: string;
   title?: string;
@@ -705,11 +876,11 @@ const headApi: HeadApi = {
   attrs: (...p) => attrs(...p),
 };
 
-export function semanticLayout<
-  DS extends AnyDesignSystem = DefaultDesignSystem,
+export function enterpriseLayout<
+  DS extends AnyDesignSystem = DefaultEnterpriseDesignSystem,
 >(
   init: LayoutInit<DS>,
-  ds: DS = defaultDesignSystem as unknown as DS,
+  ds: DS = defaultEnterpriseDesignSystem as unknown as DS,
 ): LayoutResult {
   const variant = init.variant ?? "app-shell";
 
@@ -720,11 +891,11 @@ export function semanticLayout<
   const metaViewport = init.meta?.viewport ??
     "width=device-width, initial-scale=1";
   const metaColorScheme = init.meta?.colorScheme ?? "light dark";
-  const stylesheetHref = init.stylesheetHref ?? "/fluent-ds/semantic.css";
+  const stylesheetHref = init.stylesheetHref ?? "/fluent-ds/enterprise.css";
   const stylesheetSource = stylesheetHref.startsWith("http://") ||
       stylesheetHref.startsWith("https://")
     ? stylesheetHref
-    : import.meta.resolve("./fluent-ds-semantic.css");
+    : import.meta.resolve("./enterprise.css");
 
   const parts = init.shell({
     header: ds.header,
@@ -756,7 +927,7 @@ export function semanticLayout<
         ),
         body(
           attrs(
-            { class: classNames("ds-body", themeParts.bodyClass) },
+            { class: classNames("eds-body", themeParts.bodyClass) },
             themeParts.bodyAttrs,
           ),
           bodyNode,
@@ -777,27 +948,27 @@ function buildBody(variant: LayoutVariant, parts: ShellParts): DsHtml {
   switch (variant) {
     case "centered":
       return section(
-        attrs({ class: "ds-centered" }, parts.shellAttrs),
+        attrs({ class: "eds-centered" }, parts.shellAttrs),
         parts.header ?? "",
-        section({ class: "ds-centered-container" }, parts.content),
+        section({ class: "eds-centered-container" }, parts.content),
         parts.footer ?? "",
       );
 
     case "marketing":
       return section(
-        attrs({ class: "ds-marketing" }, parts.shellAttrs),
+        attrs({ class: "eds-marketing" }, parts.shellAttrs),
         parts.header ?? "",
-        section({ class: "ds-marketing-content" }, parts.content),
+        section({ class: "eds-marketing-content" }, parts.content),
         parts.footer ?? "",
       );
 
     case "app-shell":
     default:
       return div(
-        attrs({ class: "ds-shell" }, parts.shellAttrs),
+        attrs({ class: "eds-shell" }, parts.shellAttrs),
         parts.header ?? "",
         section(
-          { class: "ds-workspace" },
+          { class: "eds-workspace" },
           parts.sidebar ?? "",
           parts.content,
           parts.rightRail ?? "",

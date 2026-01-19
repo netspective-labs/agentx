@@ -1,4 +1,4 @@
-// lib/universal/fluent-ds-sematic_test.ts
+// lib/design-system/semantic_test.ts
 
 import { assertEquals } from "@std/assert";
 import type { Element, Properties, Root, RootContent } from "hast";
@@ -28,7 +28,7 @@ import {
   span,
   ul,
   type VariantFn,
-} from "./fluent-ds-semantic.ts";
+} from "./semantic.ts";
 
 /* --------------------------------- Logging -------------------------------- */
 
@@ -502,7 +502,7 @@ Deno.test("semanticLayout(): dependencies", () => {
   assertEquals(
     Array.from(defaultPage.dependencies),
     [{
-      source: import.meta.resolve("./fluent-ds-semantic.css"),
+      source: import.meta.resolve("./semantic.css"),
       mount: "/fluent-ds/semantic.css",
       contentType: "text/css; charset=utf-8",
     }],

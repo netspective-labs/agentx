@@ -25,7 +25,7 @@ import {
   p,
   render,
   semanticLayout,
-} from "../../../lib/universal/fluent-ds-semantic.ts";
+} from "../../../lib/design-system/semantic.ts";
 import {
   codeTag,
   div,

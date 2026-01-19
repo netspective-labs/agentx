@@ -20,7 +20,7 @@ import {
   render,
   section,
   span,
-} from "../../../lib/universal/fluent-ds-enterprise.ts";
+} from "../../../lib/design-system/enterprise.ts";
 import {
   div,
   form,
