@@ -698,6 +698,84 @@ export type UaDependencyContent = UaDependencyBase & {
 
 export type UaDependency = UaDependencyReference | UaDependencyContent;
 
+type UaDepCommonOverrides = Partial<
+  Pick<UaDependencyBase, "method" | "headers" | "cache" | "cors">
+>;
+
+type UaDepRefOverrides =
+  & UaDepCommonOverrides
+  & Partial<
+    Pick<UaDependencyReference, "as" | "integrity" | "crossOrigin">
+  >;
+
+type UaDepContentOverrides =
+  & UaDepCommonOverrides
+  & Partial<
+    Pick<UaDependencyContent, "as">
+  >;
+
+type UaDepJsMimeOverride = {
+  readonly mimeType?: "text/javascript" | "application/javascript";
+};
+
+export function uaDepCssRef(
+  mountPoint: string,
+  canonicalSource: string,
+  overrides: UaDepRefOverrides = {},
+): UaDependencyReference {
+  return {
+    mountPoint,
+    canonicalSource,
+    nature: "reference",
+    mimeType: "text/css",
+    ...overrides,
+  };
+}
+
+export function uaDepJsRef(
+  mountPoint: string,
+  canonicalSource: string,
+  overrides: UaDepRefOverrides & UaDepJsMimeOverride = {},
+): UaDependencyReference {
+  const { mimeType, ...rest } = overrides;
+  return {
+    mountPoint,
+    canonicalSource,
+    nature: "reference",
+    mimeType: mimeType ?? "application/javascript",
+    ...rest,
+  };
+}
+
+export function uaDepCssContent(
+  mountPoint: string,
+  content: string,
+  overrides: UaDepContentOverrides = {},
+): UaDependencyContent {
+  return {
+    mountPoint,
+    canonicalSource: content,
+    nature: "content",
+    mimeType: "text/css",
+    ...overrides,
+  };
+}
+
+export function uaDepJsContent(
+  mountPoint: string,
+  content: string,
+  overrides: UaDepContentOverrides & UaDepJsMimeOverride = {},
+): UaDependencyContent {
+  const { mimeType, ...rest } = overrides;
+  return {
+    mountPoint,
+    canonicalSource: content,
+    nature: "content",
+    mimeType: mimeType ?? "application/javascript",
+    ...rest,
+  };
+}
+
 export type UaRoute = UaDependency & {
   readonly normalizedAs: "style" | "script" | "module" | "preload" | "other";
 };

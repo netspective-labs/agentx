@@ -322,20 +322,14 @@ Deno.test("fluent-html: helpers + security + voids", async (t) => {
 
 Deno.test("browser user agent (UA) dependencies: normalize + head tags", async (t) => {
   await t.step("normalizeUaRoute: infers and preserves `as`", () => {
-    const css = F.normalizeUaRoute({
-      mountPoint: "/base.css",
-      canonicalSource: "https://cdn/base.css",
-      nature: "reference",
-      mimeType: "text/css",
-    });
+    const css = F.normalizeUaRoute(
+      F.uaDepCssRef("/base.css", "https://cdn/base.css"),
+    );
     assertEquals(css.normalizedAs, "style");
 
-    const js = F.normalizeUaRoute({
-      mountPoint: "/app.js",
-      canonicalSource: "https://cdn/app.js",
-      nature: "reference",
-      mimeType: "application/javascript",
-    });
+    const js = F.normalizeUaRoute(
+      F.uaDepJsRef("/app.js", "https://cdn/app.js"),
+    );
     assertEquals(js.normalizedAs, "module");
 
     const other = F.normalizeUaRoute({
@@ -358,28 +352,16 @@ Deno.test("browser user agent (UA) dependencies: normalize + head tags", async (
 
   await t.step("uaHeadTags: emits head markup for known types", () => {
     const deps: F.UaDependency[] = [
-      {
-        mountPoint: "/base.css",
-        canonicalSource: "https://cdn/base.css",
-        nature: "reference",
-        mimeType: "text/css",
+      F.uaDepCssRef("/base.css", "https://cdn/base.css", {
         integrity: "sha-css",
         crossOrigin: "anonymous",
-      },
-      {
-        mountPoint: "/legacy.js",
-        canonicalSource: "https://cdn/legacy.js",
-        nature: "reference",
-        mimeType: "text/javascript",
+      }),
+      F.uaDepJsRef("/legacy.js", "https://cdn/legacy.js", {
         as: "script",
         integrity: "sha-legacy",
-      },
-      {
-        mountPoint: "/app.js",
-        canonicalSource: "https://cdn/app.js",
-        nature: "reference",
-        mimeType: "application/javascript",
-      },
+        mimeType: "text/javascript",
+      }),
+      F.uaDepJsRef("/app.js", "https://cdn/app.js"),
       {
         mountPoint: "/preload.js",
         canonicalSource: "https://cdn/preload.js",
@@ -410,18 +392,8 @@ Deno.test("browser user agent (UA) dependencies: normalize + head tags", async (
 
   await t.step("uaHeadTags: inline content dependencies", () => {
     const deps: F.UaDependency[] = [
-      {
-        mountPoint: "/inline.css",
-        canonicalSource: "body{color:red;}",
-        nature: "content",
-        mimeType: "text/css",
-      },
-      {
-        mountPoint: "/inline.js",
-        canonicalSource: "console.log(1);",
-        nature: "content",
-        mimeType: "application/javascript",
-      },
+      F.uaDepCssContent("/inline.css", "body{color:red;}"),
+      F.uaDepJsContent("/inline.js", "console.log(1);"),
     ];
 
     const html = F.renderPretty(F.head(F.browserUserAgentHeadTags(deps)));
