@@ -9,7 +9,7 @@ import {
   slots,
 } from "./fluent-ds.ts";
 import * as h from "./fluent-html.ts";
-import { breadcrumbs, card } from "../design-system/components.ts";
+import { breadcrumbs, card } from "./fluent-patterns.ts";
 
 type RenderInput = Record<PropertyKey, never>;
 
