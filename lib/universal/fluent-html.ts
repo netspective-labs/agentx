@@ -636,3 +636,118 @@ export const ul: TagFn = tag("ul");
 export const varTag: TagFn = tag("var");
 export const video: TagFn = tag("video");
 export const wbr: TagFn = tag("wbr");
+
+/* -----------------------------------------------------------------------------
+ * UA Dependencies (design system user agent dependencies)
+ * -------------------------------------------------------------------------- */
+
+export type UaDepMimeType =
+  | "text/css"
+  | "text/javascript"
+  | "application/javascript"
+  | "application/json"
+  | "image/svg+xml"
+  | "font/woff2"
+  | "text/plain"
+  | string;
+
+export type UaDependency = {
+  readonly mountPoint: string; // what HTML references, e.g. "/_fds/fluent.css"
+  readonly canonicalSource: string; // "https://..." or "http://..." or "/abs/path/..." (or file:// if you want)
+  readonly mimeType: UaDepMimeType;
+
+  // optional route controls for the server
+  readonly method?: "GET" | "HEAD"; // default GET
+  readonly headers?: Readonly<Record<string, string>>; // added to response
+  readonly cache?: {
+    readonly maxAgeSeconds?: number;
+    readonly immutable?: boolean;
+    readonly etag?: "weak" | "strong" | false; // server can generate if enabled
+  };
+  readonly cors?: {
+    readonly allowOrigin?: string; // e.g. "*" or "https://yourapp"
+    readonly allowHeaders?: string;
+    readonly allowMethods?: string;
+  };
+
+  // optional HTML emission hints
+  readonly as?: "style" | "script" | "module" | "preload" | "other";
+  readonly integrity?: string;
+  readonly crossOrigin?: "anonymous" | "use-credentials";
+};
+
+export type UaRoute = UaDependency & {
+  readonly normalizedAs: "style" | "script" | "module" | "preload" | "other";
+};
+
+export function normalizeUaRoute(dep: UaDependency): UaRoute {
+  const as = dep.as ??
+    (dep.mimeType.includes("css")
+      ? "style"
+      : dep.mimeType.includes("javascript")
+      ? "module"
+      : "other");
+
+  return { ...dep, normalizedAs: as };
+}
+
+export function uaHeadTags(deps: readonly UaDependency[]): RawHtml {
+  const routes = deps.map(normalizeUaRoute);
+
+  return children((e) => {
+    for (const r of routes) {
+      if (r.normalizedAs === "style") {
+        e(
+          link(
+            attrs(
+              { rel: "stylesheet", href: r.mountPoint },
+              r.integrity ? { integrity: r.integrity } : null,
+              r.crossOrigin ? { crossOrigin: r.crossOrigin } : null,
+            ),
+          ),
+        );
+        continue;
+      }
+
+      if (r.normalizedAs === "script") {
+        e(
+          script(
+            attrs(
+              { src: r.mountPoint },
+              r.integrity ? { integrity: r.integrity } : null,
+              r.crossOrigin ? { crossOrigin: r.crossOrigin } : null,
+            ),
+          ),
+        );
+        continue;
+      }
+
+      if (r.normalizedAs === "module") {
+        e(
+          script(
+            attrs(
+              { src: r.mountPoint, type: "module" },
+              r.integrity ? { integrity: r.integrity } : null,
+              r.crossOrigin ? { crossOrigin: r.crossOrigin } : null,
+            ),
+          ),
+        );
+        continue;
+      }
+
+      if (r.normalizedAs === "preload") {
+        e(
+          link(
+            attrs(
+              { rel: "preload", href: r.mountPoint, as: "script" },
+              r.crossOrigin ? { crossOrigin: r.crossOrigin } : null,
+            ),
+          ),
+        );
+        continue;
+      }
+
+      e(comment(`ua dep: ${r.mountPoint}`));
+    }
+  }) as unknown as RawHtml;
+}
