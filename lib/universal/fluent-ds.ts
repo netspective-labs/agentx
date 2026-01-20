@@ -190,11 +190,14 @@ import {
   UaDependency,
   UaRoute,
 } from "./fluent-html.ts";
+import type { Element, RootContent } from "hast";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
 
-type NamingKind = "layout" | "region" | "component";
+type NamingKind = "layout" | "region" | "component" | "css-emit";
+
+export type CssStyleEmitStrategy = "inline" | "class-dep" | "class-style-head";
 
 export type NamingStrategy = {
   readonly elemIdValue: (suggested: string, kind: NamingKind) => string;
@@ -515,6 +518,7 @@ export type RenderOptionsFor<
   NS extends NamingStrategy = NamingStrategy,
 > = {
   readonly slots: SlotBuilders<L["slots"], Ctx, NS>;
+  readonly cssStyleEmitStrategy?: CssStyleEmitStrategy;
 };
 
 type HeadSlotsFor<
@@ -531,7 +535,10 @@ export type PageOptionsFor<
   L extends LayoutDef<string, Any, Ctx, NS>,
   Ctx extends object = EmptyObject,
   NS extends NamingStrategy = NamingStrategy,
-> = RenderOptionsFor<L, Ctx, NS> & HeadSlotsFor<L, Ctx, NS>;
+> =
+  & RenderOptionsFor<L, Ctx, NS>
+  & HeadSlotsFor<L, Ctx, NS>
+  & { readonly cssStyleEmitStrategy?: CssStyleEmitStrategy };
 
 export type DesignSystem<
   R extends RegionsRegistry<Ctx, NS>,
@@ -661,6 +668,7 @@ export function createDesignSystem<
             layoutName as string,
             renderCtx,
             options.slots,
+            options.cssStyleEmitStrategy,
           ),
         renderPretty: (layoutName, renderCtx, options) =>
           renderInternal(
@@ -673,6 +681,7 @@ export function createDesignSystem<
             layoutName as string,
             renderCtx,
             options.slots,
+            options.cssStyleEmitStrategy,
           ),
         page: (layoutName, renderCtx, options) =>
           renderPageInternal(
@@ -689,6 +698,7 @@ export function createDesignSystem<
             options.headSlots as
               | Record<string, SlotBuilder<Ctx, NS>>
               | undefined,
+            options.cssStyleEmitStrategy,
           ),
       };
 
@@ -719,6 +729,7 @@ function renderInternal<Ctx extends object, NS extends NamingStrategy>(
   layoutName: string,
   renderCtx: Ctx,
   layoutSlots: Record<string, SlotBuilder<Ctx, NS>>,
+  cssStyleEmitStrategy?: CssStyleEmitStrategy,
 ): RawHtml {
   if (policy.rawPolicy) h.setRawPolicy(policy.rawPolicy);
 
@@ -767,7 +778,7 @@ function renderInternal<Ctx extends object, NS extends NamingStrategy>(
     layoutSlots,
   );
 
-  return raw;
+  return applyCssStyleEmitStrategy(raw, cssStyleEmitStrategy);
 }
 
 function renderPageInternal<Ctx extends object, NS extends NamingStrategy>(
@@ -782,6 +793,7 @@ function renderPageInternal<Ctx extends object, NS extends NamingStrategy>(
   renderCtx: Ctx,
   layoutSlots: Record<string, SlotBuilder<Ctx, NS>>,
   headSlotsIn: Record<string, SlotBuilder<Ctx, NS>> | undefined,
+  cssStyleEmitStrategy?: CssStyleEmitStrategy,
 ): RawHtml {
   if (policy.rawPolicy) h.setRawPolicy(policy.rawPolicy);
 
@@ -825,8 +837,8 @@ function renderPageInternal<Ctx extends object, NS extends NamingStrategy>(
   const def = layouts[layoutName];
   if (!def) throw new Error(`fluent-ds: unknown layout "${layoutName}"`);
 
-  const uaHead = browserUserAgentHeadTags(uaDepsFn());
-  const headChildren: RawHtml[] = [uaHead];
+  const baseDeps = uaDepsFn();
+  const headChildren: RawHtml[] = [];
 
   if (def.headSlots) {
     const normalized = normalizeAndValidateSlots(
@@ -850,7 +862,27 @@ function renderPageInternal<Ctx extends object, NS extends NamingStrategy>(
     );
   }
 
-  const body = invokeLayout(layouts, ctxBase, api, layoutName, layoutSlots);
+  const bodyRaw = invokeLayout(layouts, ctxBase, api, layoutName, layoutSlots);
+  const { html: body, cssText } = extractInlineStylesForClassStrategy(
+    bodyRaw,
+    cssStyleEmitStrategy,
+    ["body"],
+  );
+  if (cssText && cssStyleEmitStrategy === "class-style-head") {
+    headChildren.unshift(h.style(cssText));
+    headChildren.unshift(browserUserAgentHeadTags(baseDeps));
+  } else {
+    const uaDeps = cssText && cssStyleEmitStrategy === "class-dep"
+      ? [
+        ...baseDeps,
+        h.uaDepCssContent(cssStyleMountPoint(dsName), cssText, {
+          emit: "link",
+        }),
+      ]
+      : baseDeps;
+    headChildren.unshift(browserUserAgentHeadTags(uaDeps));
+  }
+
   const page = h.html(
     h.head(...headChildren),
     h.body(body),
@@ -858,6 +890,116 @@ function renderPageInternal<Ctx extends object, NS extends NamingStrategy>(
   const doc = h.doctype();
 
   return combineHast(doc, page);
+}
+
+type InlineStyleExtraction = {
+  readonly html: RawHtml;
+  readonly cssText: string;
+};
+
+function cssStyleMountPoint(dsName: string): string {
+  const safe = dsName.replace(/[^a-zA-Z0-9_-]+/g, "-").replaceAll("--", "-");
+  return `/_ua/${safe}/inline.css`;
+}
+
+function getElementId(props: Record<string, unknown>): string | undefined {
+  const id = props.id ?? props.ID;
+  if (typeof id === "string") return id;
+  if (typeof id === "number") return String(id);
+  return undefined;
+}
+
+function getClassTokens(props: Record<string, unknown>): string[] {
+  const value = ("class" in props ? props.class : props.className) as unknown;
+  if (typeof value === "string") {
+    return value.split(/\s+/).filter((t) => t.trim() !== "");
+  }
+  if (Array.isArray(value)) {
+    return value.map((v) => String(v)).filter((t) => t.trim() !== "");
+  }
+  if (value == null) return [];
+  return [String(value)];
+}
+
+function extractInlineStylesForClassStrategy(
+  raw: RawHtml,
+  cssStyleEmitStrategy?: CssStyleEmitStrategy,
+  basePath: string[] = [],
+): InlineStyleExtraction {
+  if (
+    (cssStyleEmitStrategy !== "class-dep" &&
+      cssStyleEmitStrategy !== "class-style-head") || !raw.__nodes
+  ) {
+    return { html: raw, cssText: "" };
+  }
+
+  const rules: string[] = [];
+
+  const visit = (node: RootContent, path: string[]): void => {
+    if (node.type === "element") {
+      const element = node as Element;
+      const props = (element.properties ??= {}) as Record<string, unknown>;
+      const styleText = props.style;
+      if (typeof styleText === "string" && styleText.trim() !== "") {
+        delete props.style;
+        const id = getElementId(props);
+        const classTokens = getClassTokens(props);
+        const nodeSelector = classTokens.length > 0
+          ? `${element.tagName}.${classTokens.join(".")}`
+          : element.tagName;
+        const cascadeSelector = [...path, nodeSelector].join(" ");
+
+        const selectors: string[] = [];
+        if (cascadeSelector) selectors.push(cascadeSelector);
+        if (id) selectors.push(`#${id}`);
+
+        const selectorKey = selectors.join(", ");
+        const ruleBody = styleText.trim().endsWith(";")
+          ? styleText.trim()
+          : `${styleText.trim()};`;
+        rules.push(`${selectorKey} { ${ruleBody} }`);
+      }
+      const classTokens = getClassTokens(props);
+      const nodeSelector = classTokens.length > 0
+        ? `${element.tagName}.${classTokens.join(".")}`
+        : element.tagName;
+      const nextPath = [...path, nodeSelector];
+      if ("children" in node && Array.isArray(node.children)) {
+        for (const child of node.children) {
+          visit(child as RootContent, nextPath);
+        }
+      }
+      return;
+    }
+    if ("children" in node && Array.isArray(node.children)) {
+      for (const child of node.children) visit(child as RootContent, path);
+    }
+  };
+
+  for (const node of raw.__nodes) visit(node as RootContent, basePath);
+
+  if (rules.length === 0) return { html: raw, cssText: "" };
+
+  const normalized = h.render(raw);
+  return {
+    html: { __rawHtml: normalized, __nodes: raw.__nodes },
+    cssText: rules.join("\n"),
+  };
+}
+
+function applyCssStyleEmitStrategy(
+  raw: RawHtml,
+  cssStyleEmitStrategy?: CssStyleEmitStrategy,
+): RawHtml {
+  const effective = cssStyleEmitStrategy === "class-dep"
+    ? "class-style-head"
+    : cssStyleEmitStrategy;
+  const { html, cssText } = extractInlineStylesForClassStrategy(
+    raw,
+    effective,
+  );
+  if (!cssText) return html;
+  return combineHast(h.style(cssText), html);
 }
 
 function invokeLayout<Ctx extends object, NS extends NamingStrategy>(

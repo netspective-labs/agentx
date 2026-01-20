@@ -345,3 +345,87 @@ Deno.test("fluent-ds: full semantic layout with components", () => {
 </html>`,
   );
 });
+
+Deno.test("fluent-ds: css style emit strategies", async (t) => {
+  const demoLayout = defineLayout({
+    name: "StyleDemo",
+    slots: slots({ required: ["content"] as const }),
+    render: (ctx, _api, s) => h.main({ style: "color:red" }, s.content(ctx)),
+  });
+
+  const dsName = "style-demo";
+  const ds = createDesignSystem<RenderInput>(dsName, naming)
+    .policies({ wrappers: { enabled: false } })
+    .layout(demoLayout)
+    .build();
+
+  await t.step("inline", () => {
+    const inline = h.renderPretty(
+      ds.page("StyleDemo", {}, {
+        slots: { content: () => h.span("Hi") },
+        cssStyleEmitStrategy: "inline",
+      }),
+    );
+    assertEquals(
+      inline.trim(),
+      `<!doctype html>
+<html>
+  <head></head>
+  <body>
+    <main style="color:red"><span>Hi</span></main>
+  </body>
+</html>`,
+    );
+  });
+
+  const cssText = "body main { color:red; }";
+
+  await t.step("class-style-head", () => {
+    const classHead = h.renderPretty(
+      ds.page("StyleDemo", {}, {
+        slots: { content: () => h.span("Hi") },
+        cssStyleEmitStrategy: "class-style-head",
+      }),
+    );
+    assertEquals(
+      classHead.trim(),
+      `<!doctype html>
+<html>
+  <head>
+    <style>${cssText}</style>
+  </head>
+  <body>
+    <main><span>Hi</span></main>
+  </body>
+</html>`,
+    );
+  });
+
+  await t.step("class-dep", () => {
+    const classDep = h.renderPretty(
+      ds.page("StyleDemo", {}, {
+        slots: { content: () => h.span("Hi") },
+        cssStyleEmitStrategy: "class-dep",
+      }),
+    );
+    assertEquals(
+      classDep.trim(),
+      `<!doctype html>
+<html>
+  <head>
+    <link href="/_ua/style-demo/inline.css" rel="stylesheet">
+  </head>
+  <body>
+    <main><span>Hi</span></main>
+  </body>
+</html>`,
+    );
+
+    const dep = h.uaDepCssContent("/_ua/style-demo/inline.css", cssText, {
+      emit: "link",
+    });
+    assertEquals(dep.nature, "content");
+    assertEquals(dep.emit, "link");
+    assertEquals(dep.canonicalSource, cssText);
+  });
+});

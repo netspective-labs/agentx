@@ -691,6 +691,7 @@ export type UaDependencyReference = UaDependencyBase & {
 export type UaDependencyContent = UaDependencyBase & {
   readonly nature: "content";
   readonly canonicalSource: string; // full inlined content (css/js/etc)
+  readonly emit?: "inline" | "link";
 
   // optional HTML emission hints
   readonly as?: "style" | "script" | "module" | "other";
@@ -711,7 +712,7 @@ type UaDepRefOverrides =
 type UaDepContentOverrides =
   & UaDepCommonOverrides
   & Partial<
-    Pick<UaDependencyContent, "as">
+    Pick<UaDependencyContent, "as" | "emit">
   >;
 
 type UaDepJsMimeOverride = {
@@ -799,6 +800,21 @@ export function browserUserAgentHeadTags(
   return children((e) => {
     for (const r of routes) {
       if (r.nature === "content") {
+        if (r.emit === "link") {
+          if (r.normalizedAs === "style") {
+            e(link(attrs({ rel: "stylesheet", href: r.mountPoint })));
+            continue;
+          }
+          if (r.normalizedAs === "script") {
+            e(script(attrs({ src: r.mountPoint })));
+            continue;
+          }
+          if (r.normalizedAs === "module") {
+            e(script(attrs({ src: r.mountPoint, type: "module" })));
+            continue;
+          }
+        }
+
         if (r.normalizedAs === "style") {
           e(styleCss(r.canonicalSource));
           continue;
