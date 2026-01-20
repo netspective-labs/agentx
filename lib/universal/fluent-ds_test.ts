@@ -350,7 +350,24 @@ Deno.test("fluent-ds: css style emit strategies", async (t) => {
   const demoLayout = defineLayout({
     name: "StyleDemo",
     slots: slots({ required: ["content"] as const }),
-    render: (ctx, _api, s) => h.main({ style: "color:red" }, s.content(ctx)),
+    render: (ctx, _api, s) =>
+      h.div(
+        { id: "app", style: "font-family:serif" },
+        h.header(
+          { style: "padding:1rem" },
+          h.h1({ style: "margin:0" }, "Demo"),
+          h.nav({ style: "gap:0.5rem" }, h.a({ href: "/" }, "Home")),
+        ),
+        h.main(
+          { id: "main", style: "color:red" },
+          h.section(
+            { class: "card", style: "border:1px solid #000" },
+            s.content(ctx),
+          ),
+        ),
+        h.aside({ id: "promo", style: "background:#eee" }, "Promo"),
+        h.footer({ style: "opacity:0.7" }, "Footer"),
+      ),
   });
 
   const dsName = "style-demo";
@@ -362,7 +379,7 @@ Deno.test("fluent-ds: css style emit strategies", async (t) => {
   await t.step("inline", () => {
     const inline = h.renderPretty(
       ds.page("StyleDemo", {}, {
-        slots: { content: () => h.span("Hi") },
+        slots: { content: () => h.p("Hi") },
         cssStyleEmitStrategy: "inline",
       }),
     );
@@ -372,18 +389,39 @@ Deno.test("fluent-ds: css style emit strategies", async (t) => {
 <html>
   <head></head>
   <body>
-    <main style="color:red"><span>Hi</span></main>
+    <div id="app" style="font-family:serif">
+      <header style="padding:1rem">
+        <h1 style="margin:0">Demo</h1>
+        <nav style="gap:0.5rem"><a href="/">Home</a></nav>
+      </header>
+      <main id="main" style="color:red">
+        <section class="card" style="border:1px solid #000">
+          <p>Hi</p>
+        </section>
+      </main>
+      <aside id="promo" style="background:#eee">Promo</aside>
+      <footer style="opacity:0.7">Footer</footer>
+    </div>
   </body>
 </html>`,
     );
   });
 
-  const cssText = "body main { color:red; }";
+  const cssText = [
+    "body div, #app { font-family:serif; }",
+    "body div header { padding:1rem; }",
+    "body div header h1 { margin:0; }",
+    "body div header nav { gap:0.5rem; }",
+    "body div main, #main { color:red; }",
+    "body div main section.card { border:1px solid #000; }",
+    "body div aside, #promo { background:#eee; }",
+    "body div footer { opacity:0.7; }",
+  ].join("\n");
 
   await t.step("class-style-head", () => {
     const classHead = h.renderPretty(
       ds.page("StyleDemo", {}, {
-        slots: { content: () => h.span("Hi") },
+        slots: { content: () => h.p("Hi") },
         cssStyleEmitStrategy: "class-style-head",
       }),
     );
@@ -395,7 +433,19 @@ Deno.test("fluent-ds: css style emit strategies", async (t) => {
     <style>${cssText}</style>
   </head>
   <body>
-    <main><span>Hi</span></main>
+    <div id="app">
+      <header>
+        <h1>Demo</h1>
+        <nav><a href="/">Home</a></nav>
+      </header>
+      <main id="main">
+        <section class="card">
+          <p>Hi</p>
+        </section>
+      </main>
+      <aside id="promo">Promo</aside>
+      <footer>Footer</footer>
+    </div>
   </body>
 </html>`,
     );
@@ -404,7 +454,7 @@ Deno.test("fluent-ds: css style emit strategies", async (t) => {
   await t.step("class-dep", () => {
     const classDep = h.renderPretty(
       ds.page("StyleDemo", {}, {
-        slots: { content: () => h.span("Hi") },
+        slots: { content: () => h.p("Hi") },
         cssStyleEmitStrategy: "class-dep",
       }),
     );
@@ -416,7 +466,19 @@ Deno.test("fluent-ds: css style emit strategies", async (t) => {
     <link href="/_ua/style-demo/inline.css" rel="stylesheet">
   </head>
   <body>
-    <main><span>Hi</span></main>
+    <div id="app">
+      <header>
+        <h1>Demo</h1>
+        <nav><a href="/">Home</a></nav>
+      </header>
+      <main id="main">
+        <section class="card">
+          <p>Hi</p>
+        </section>
+      </main>
+      <aside id="promo">Promo</aside>
+      <footer>Footer</footer>
+    </div>
   </body>
 </html>`,
     );
