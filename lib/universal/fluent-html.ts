@@ -168,6 +168,14 @@ function textNodes(text: string): readonly RootContent[] {
 }
 
 /**
+ * Minimal text node wrapper (no parsing).
+ */
+export function text(value: string): RawHtml {
+  const nodes = textNodes(value);
+  return { __rawHtml: value, __nodes: nodes };
+}
+
+/**
  * Trusted HTML insertion: parses markup into HAST nodes (fragment) and stores nodes.
  * This keeps the AST strictly HAST-compliant (no semistandard `raw` nodes).
  */
