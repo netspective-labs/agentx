@@ -15,8 +15,8 @@ import {
   docNavTree,
   DocNavTrees,
   docSubjectSelect,
-  headSlots,
   HeadSlotInput,
+  headSlots,
   headSlotSpec,
   selectDocNavTree,
 } from "./fluent-patterns.ts";
@@ -143,9 +143,7 @@ export const corpusHeaderRegion = defineRegion({
       h.nav(
         h.ul(h.li(h.strong(s.title(ctx)))),
         s.globalNav ? s.globalNav(ctx) : null,
-        s.searchBox
-          ? h.form({ role: "search" }, s.searchBox(ctx))
-          : null,
+        s.searchBox ? h.form({ role: "search" }, s.searchBox(ctx)) : null,
       ),
     );
   },
@@ -191,7 +189,7 @@ export const corpusFooterRegion = defineRegion({
   slots: slots({
     optional: ["content"] as const,
   }),
-  render: (ctx: RenderCtx<RenderInput, NamingStrategy>, s) => {
+  render: (ctx, s) => {
     return h.footer(
       { class: "container" },
       s.content ? s.content(ctx) : null,
@@ -206,7 +204,7 @@ export const docsShellLayout = defineLayout({
     optional: ["toc", "pageMeta", "globalNav", "searchBox", "footer"] as const,
   }),
   headSlots: headSlotSpec,
-  render: (ctx: RenderCtx<RenderInput, NamingStrategy>, api, s) =>
+  render: (_ctx, api, s) =>
     h.div(
       api.region(
         "Header",
