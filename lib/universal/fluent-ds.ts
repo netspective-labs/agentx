@@ -398,6 +398,25 @@ export function defineRegion<
 export function defineLayout<
   Name extends string,
   Spec extends SlotSpec<string, string>,
+  HeadSpec extends SlotSpec<string, string>,
+  Ctx extends object = EmptyObject,
+  NS extends NamingStrategy = NamingStrategy,
+>(
+  def: Omit<LayoutDef<Name, Spec, Ctx, NS>, "kind"> & {
+    readonly headSlots: HeadSpec;
+  },
+): LayoutDef<Name, Spec, Ctx, NS> & { readonly headSlots: HeadSpec };
+export function defineLayout<
+  Name extends string,
+  Spec extends SlotSpec<string, string>,
+  Ctx extends object = EmptyObject,
+  NS extends NamingStrategy = NamingStrategy,
+>(
+  def: Omit<LayoutDef<Name, Spec, Ctx, NS>, "kind">,
+): LayoutDef<Name, Spec, Ctx, NS>;
+export function defineLayout<
+  Name extends string,
+  Spec extends SlotSpec<string, string>,
   Ctx extends object = EmptyObject,
   NS extends NamingStrategy = NamingStrategy,
 >(

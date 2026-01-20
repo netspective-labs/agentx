@@ -15,6 +15,7 @@ import {
   docNavTree,
   DocNavTrees,
   docSubjectSelect,
+  headSlotSpec,
   selectDocNavTree,
 } from "./fluent-patterns.ts";
 
@@ -208,9 +209,7 @@ export const docsShellLayout = defineLayout({
     required: ["title", "navSubject", "navTree", "content"] as const,
     optional: ["toc", "pageMeta", "globalNav", "searchBox", "footer"] as const,
   }),
-  headSlots: slots({
-    optional: ["title", "head"] as const,
-  }),
+  headSlots: headSlotSpec,
   render: (ctx: RenderCtx<RenderInput, NamingStrategy>, api, s) =>
     h.section(
       {
@@ -245,9 +244,7 @@ export const docPageLayout = defineLayout({
     required: ["title", "navSubject", "navTree", "content"] as const,
     optional: ["toc", "pageMeta", "globalNav", "searchBox", "footer"] as const,
   }),
-  headSlots: slots({
-    optional: ["title", "head"] as const,
-  }),
+  headSlots: headSlotSpec,
   render: (_ctx, api, s) =>
     api.layout(
       "DocsShell",
@@ -271,9 +268,7 @@ export const docLandingLayout = defineLayout({
     required: ["title", "hero", "sections"] as const,
     optional: ["globalNav", "searchBox", "featured", "footer"] as const,
   }),
-  headSlots: slots({
-    optional: ["title", "head"] as const,
-  }),
+  headSlots: headSlotSpec,
   render: (ctx: RenderCtx<RenderInput, NamingStrategy>, api, s) =>
     h.section(
       {

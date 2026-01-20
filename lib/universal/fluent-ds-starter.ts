@@ -9,6 +9,7 @@ import {
   slots,
 } from "./fluent-ds.ts";
 import * as h from "./fluent-html.ts";
+import { HeadSlotInput, headSlots, headSlotSpec } from "./fluent-patterns.ts";
 
 type RenderInput = Record<PropertyKey, never>;
 
@@ -30,13 +31,14 @@ export const starterMainRegion = defineRegion({
   }),
   render: (ctx: RenderCtx<RenderInput, NamingStrategy>, s) =>
     h.main(
-      {
-        class: ctx.cls("main"),
-        id: ctx.naming.elemIdValue("main", "region"),
-      },
-      h.h1(s.title(ctx)),
-      s.lead ? h.div({ class: ctx.cls("lead") }, s.lead(ctx)) : null,
-      h.section({ class: ctx.cls("content") }, s.content(ctx)),
+      { class: "container" },
+      h.header(
+        h.hgroup(
+          h.h1(s.title(ctx)),
+          s.lead ? s.lead(ctx) : null,
+        ),
+      ),
+      h.section(s.content(ctx)),
     ),
 });
 
@@ -46,25 +48,17 @@ export const starterLayout = defineLayout({
     required: ["title", "content"] as const,
     optional: ["lead"] as const,
   }),
-  headSlots: slots({
-    optional: ["title"] as const,
-  }),
-  render: (ctx: RenderCtx<RenderInput, NamingStrategy>, api, s) =>
-    h.section(
-      {
-        class: ctx.cls("shell"),
-        id: ctx.naming.elemIdValue("shell", "layout"),
-      },
-      api.region("Main", {
-        title: s.title,
-        content: s.content,
-        ...(s.lead ? { lead: s.lead } : {}),
-      }),
-    ),
+  headSlots: headSlotSpec,
+  render: (_ctx, api, s) =>
+    api.region("Main", {
+      title: s.title,
+      content: s.content,
+      ...(s.lead ? { lead: s.lead } : {}),
+    }),
 });
 
 export function starterDesignSystem(dsName = "starter-ds") {
-  return createDesignSystem<RenderInput>(dsName, naming)
+  const ds = createDesignSystem<RenderInput>(dsName, naming)
     .policies({ wrappers: { enabled: false } })
     .uaDependencies([
       {
@@ -76,4 +70,36 @@ export function starterDesignSystem(dsName = "starter-ds") {
     .region(starterMainRegion)
     .layout(starterLayout)
     .build();
+
+  const defaultHead = headSlots({
+    styles: [
+      h.style(`
+        :root {
+          font-size: 85%;
+        }
+      `),
+    ],
+  });
+
+  const mergeHead = (
+    input?: HeadSlotInput<RenderInput, NamingStrategy>,
+  ) => {
+    const overrides = input ? headSlots(input) : {};
+    const merged = { ...defaultHead } as Record<string, unknown>;
+    for (const [key, value] of Object.entries(overrides)) {
+      if (value) merged[key] = value;
+    }
+    return merged;
+  };
+
+  const page: typeof ds.page = (layoutName, renderCtx, options) =>
+    ds.page(layoutName, renderCtx, {
+      ...options,
+      headSlots: mergeHead(options.headSlots),
+    });
+
+  return {
+    ...ds,
+    page,
+  };
 }

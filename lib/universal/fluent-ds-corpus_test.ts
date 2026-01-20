@@ -2,6 +2,7 @@
 import { assertEquals } from "@std/assert";
 import * as h from "./fluent-html.ts";
 import { corpusDesignSystem, docPageSlots } from "./fluent-ds-corpus.ts";
+import { headSlots } from "./fluent-patterns.ts";
 
 Deno.test("fluent-ds-corpus: doc page layout", () => {
   const ds = corpusDesignSystem();
@@ -59,7 +60,12 @@ Deno.test("fluent-ds-corpus: doc page layout", () => {
   });
 
   const page = h.renderPretty(
-    ds.page("DocPage", {}, { slots }),
+    ds.page("DocPage", {}, {
+      slots,
+      headSlots: headSlots({
+        title: "Corpus DS",
+      }),
+    }),
   );
 
   assertEquals(
@@ -69,6 +75,7 @@ Deno.test("fluent-ds-corpus: doc page layout", () => {
   <head>
     <link href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/@corpus-ds/client@0/dist/corpus.min.js" type="module"></script>
+    <title>Corpus DS</title>
   </head>
   <body>
     <section class="layout-docs-shell" id="layout-shell">

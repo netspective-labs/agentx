@@ -1,8 +1,102 @@
-import { defineComponent, NamingStrategy, SlotBuilder } from "./fluent-ds.ts";
+import {
+  defineComponent,
+  defineRegion,
+  NamingStrategy,
+  SlotBuilder,
+  SlotBuilders,
+  slots,
+} from "./fluent-ds.ts";
 import * as h from "./fluent-html.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
+
+export const headSlotSpec = slots({
+  optional: ["title", "meta", "links", "styles", "scripts", "head"] as const,
+});
+
+export type HeadSlotInput<
+  Ctx extends object = Record<PropertyKey, never>,
+  NS extends NamingStrategy = NamingStrategy,
+> = {
+  readonly title?: SlotBuilder<Ctx, NS> | string;
+  readonly meta?: SlotBuilder<Ctx, NS> | readonly h.RawHtml[];
+  readonly links?: SlotBuilder<Ctx, NS> | readonly h.RawHtml[];
+  readonly styles?: SlotBuilder<Ctx, NS> | readonly h.RawHtml[];
+  readonly scripts?: SlotBuilder<Ctx, NS> | readonly h.RawHtml[];
+  readonly head?: SlotBuilder<Ctx, NS> | readonly h.RawHtml[];
+};
+
+export function headText(value: string): h.RawHtml {
+  return h.trustedRawFriendly`
+${value}`;
+}
+
+export function headGroup(...parts: h.RawHtml[]): h.RawHtml {
+  const nodes = parts.flatMap((p) => p.__nodes ?? []);
+  const raw = parts.map((p) => p.__rawHtml).join("");
+  return { __rawHtml: raw, __nodes: nodes };
+}
+
+function headSlot<Ctx extends object, NS extends NamingStrategy>(
+  value?: SlotBuilder<Ctx, NS> | readonly h.RawHtml[] | string,
+): SlotBuilder<Ctx, NS> | undefined {
+  if (!value) return undefined;
+  if (typeof value === "function") return value;
+  if (typeof value === "string") return () => headText(value);
+  return () => headGroup(...value);
+}
+
+export function headSlots<
+  Ctx extends object = Record<PropertyKey, never>,
+  NS extends NamingStrategy = NamingStrategy,
+>(
+  input: HeadSlotInput<Ctx, NS>,
+): SlotBuilders<typeof headSlotSpec, Ctx, NS> {
+  return {
+    title: headSlot(input.title),
+    meta: headSlot(input.meta),
+    links: headSlot(input.links),
+    styles: headSlot(input.styles),
+    scripts: headSlot(input.scripts),
+    head: headSlot(input.head),
+  };
+}
+
+export const headerRegionSlots = slots({
+  required: ["title"] as const,
+  optional: ["subtitle", "nav", "actions", "search"] as const,
+});
+
+export function defineHeaderRegion<
+  Ctx extends object = Record<PropertyKey, never>,
+  NS extends NamingStrategy = NamingStrategy,
+>(name = "Header") {
+  return defineRegion({
+    name,
+    slots: headerRegionSlots,
+    render: (ctx, s) => {
+      const elementId = ctx.naming.elemIdValue("header", "region");
+      return h.header(
+        h.attrs({ id: elementId }, { class: ctx.cls("header") }),
+        h.div(
+          { class: ctx.cls("header__row") },
+          h.div({ class: ctx.cls("header__title") }, s.title(ctx)),
+          s.subtitle
+            ? h.div({ class: ctx.cls("header__subtitle") }, s.subtitle(ctx))
+            : null,
+          s.nav ? h.nav({ class: ctx.cls("header__nav") }, s.nav(ctx)) : null,
+          s.actions
+            ? h.div({ class: ctx.cls("header__actions") }, s.actions(ctx))
+            : null,
+          s.search
+            ? h.div({ class: ctx.cls("header__search") }, s.search(ctx))
+            : null,
+        ),
+      );
+    },
+  });
+}
 
 export type CardProps<Ctx extends object = Record<PropertyKey, never>> = {
   readonly title?: string;
