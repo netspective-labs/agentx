@@ -2208,10 +2208,10 @@ export const leftSidebarRegion = defineRegion({
         class: "left-sidebar",
         style: ctx.css({
           position: "fixed",
-          top: "48px",
+          top: "var(--context-header-height)",
           left: 0,
           width: "280px",
-          height: "calc(100vh - 48px)",
+          height: "calc(100vh - var(--context-header-height))",
           background: "#ffffff",
           borderRight: "1px solid #e5e5e5",
           overflowY: "auto",
@@ -2239,7 +2239,7 @@ export const breadcrumbRowRegion = defineRegion({
           gridColumn: "2 / 4",
           gridRow: "2",
           position: "sticky",
-          top: "48px",
+          top: "var(--context-header-height)",
           zIndex: 100,
           background: "rgba(255, 255, 255, 0.95)",
           backdropFilter: "blur(8px)",
@@ -2285,10 +2285,11 @@ export const rightSidebarRegion = defineRegion({
         class: "right-sidebar",
         style: ctx.css({
           position: "fixed",
-          top: "93px",
+          top: "calc(var(--context-header-height) + var(--breadcrumb-row-height))",
           right: 0,
           width: "200px",
-          height: "calc(100vh - 93px)",
+          height:
+            "calc(100vh - (var(--context-header-height) + var(--breadcrumb-row-height)))",
           padding: "24px 20px",
           overflowY: "auto",
         }),
@@ -2304,22 +2305,23 @@ export const rightSidebarRegion = defineRegion({
 export const naturalLayout = defineLayout({
   name: "NaturalDoc",
   slots: slots({
-    required: [
-      "contextHeader",
-      "sidebar",
-      "breadcrumbs",
-      "content",
-      "toc",
-    ] as const,
+    required: ["breadcrumbs", "content"] as const,
+    optional: ["contextHeader", "sidebar", "toc"] as const,
   }),
   headSlots: headSlotSpec,
-  render: (ctx, api, s) =>
-    h.div(
+  render: (ctx, api, s) => {
+    const hasContextHeader = Boolean(s.contextHeader);
+    const hasSidebar = Boolean(s.sidebar);
+    const hasToc = Boolean(s.toc);
+
+    return h.div(
       {
         class: "page-layout",
         style: ctx.css({
           display: "grid",
-          gridTemplateColumns: "280px 1fr 200px",
+          gridTemplateColumns: `${
+            hasSidebar ? "280px" : "0px"
+          } 1fr ${hasToc ? "200px" : "0px"}`,
           gridTemplateRows: "auto auto 1fr",
           minHeight: "100vh",
           fontFamily:
@@ -2328,14 +2330,19 @@ export const naturalLayout = defineLayout({
           lineHeight: 1.6,
           color: "#0a0a0a",
           backgroundColor: "#fafafa",
+          "--context-header-height": hasContextHeader ? "48px" : "0px",
+          "--breadcrumb-row-height": "45px",
         }),
       },
-      api.region("ContextHeader", { content: s.contextHeader }),
-      api.region("LeftSidebar", { content: s.sidebar }),
+      hasContextHeader
+        ? api.region("ContextHeader", { content: s.contextHeader })
+        : null,
+      hasSidebar ? api.region("LeftSidebar", { content: s.sidebar }) : null,
       api.region("BreadcrumbRow", { crumbs: s.breadcrumbs }),
       api.region("MainContent", { content: s.content }),
-      api.region("RightSidebar", { content: s.toc }),
-    ),
+      hasToc ? api.region("RightSidebar", { content: s.toc }) : null,
+    );
+  },
 });
 
 /* -----------------------------------------------------------------------------
