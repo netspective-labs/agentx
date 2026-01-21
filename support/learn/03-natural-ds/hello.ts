@@ -103,7 +103,7 @@ const pageHtml = (): string => {
         }),
       ],
     }),
-    cssStyleEmitStrategy: "class-style-head",
+    styleAttributeEmitStrategy: "head",
   });
 
   return H.render(page);

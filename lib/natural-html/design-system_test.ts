@@ -397,7 +397,7 @@ Deno.test("fluent-ds: css style emit strategies", async (t) => {
         slots: {
           content: (ctx) => h.p("Hi", " ", badge(ctx, { label: "New" })),
         },
-        cssStyleEmitStrategy: "inline",
+        styleAttributeEmitStrategy: "inline",
       }),
     );
     assertEquals(
@@ -437,13 +437,13 @@ Deno.test("fluent-ds: css style emit strategies", async (t) => {
     "body div footer { opacity:0.7; }",
   ].join("\n");
 
-  await t.step("class-style-head", () => {
+  await t.step("head", () => {
     const classHead = h.renderPretty(
       ds.page("StyleDemo", {}, {
         slots: {
           content: (ctx) => h.p("Hi", " ", badge(ctx, { label: "New" })),
         },
-        cssStyleEmitStrategy: "class-style-head",
+        styleAttributeEmitStrategy: "head",
       }),
     );
     assertEquals(
@@ -472,13 +472,13 @@ Deno.test("fluent-ds: css style emit strategies", async (t) => {
     );
   });
 
-  await t.step("class-dep", () => {
+  await t.step("ua-dep", () => {
     const classDep = h.renderPretty(
       ds.page("StyleDemo", {}, {
         slots: {
           content: (ctx) => h.p("Hi", " ", badge(ctx, { label: "New" })),
         },
-        cssStyleEmitStrategy: "class-dep",
+        styleAttributeEmitStrategy: "ua-dep",
       }),
     );
     assertEquals(

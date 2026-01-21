@@ -320,6 +320,70 @@ Deno.test("fluent-html: helpers + security + voids", async (t) => {
   });
 });
 
+Deno.test("fluent-html: style attribute css collection + emission", async (t) => {
+  await t.step("collect: head strategy extracts styles", () => {
+    const raw = F.div(
+      { id: "app", style: "color:red" },
+      F.span({ class: "x y", style: "margin:0" }, "Hi"),
+    );
+    const { html, cssText } = F.collectStyleAttributeCss(
+      raw,
+      "head",
+      [],
+      "body { margin:0; }",
+    );
+    assertEquals(
+      cssText,
+      [
+        "body { margin:0; }",
+        "div, #app { color:red; }",
+        "div span.x.y { margin:0; }",
+      ].join("\n"),
+    );
+    assertEquals(
+      F.render(html),
+      `<div id="app"><span class="x y">Hi</span></div>`,
+    );
+  });
+
+  await t.step("collect: inline strategy is a no-op", () => {
+    const raw = F.div(
+      { id: "app", style: "color:red" },
+      F.span({ class: "x y", style: "margin:0" }, "Hi"),
+    );
+    const { html, cssText } = F.collectStyleAttributeCss(raw, "inline");
+    assertEquals(cssText, "");
+    assertEquals(
+      F.render(html),
+      `<div id="app" style="color:red"><span class="x y" style="margin:0">Hi</span></div>`,
+    );
+  });
+
+  await t.step("emit: ua-dep strategy emits head style", () => {
+    const rawForDeps = F.div(
+      { id: "app", style: "color:red" },
+      F.span({ class: "x y", style: "margin:0" }, "Hi"),
+    );
+    const rawForEmit = F.div(
+      { id: "app", style: "color:red" },
+      F.span({ class: "x y", style: "margin:0" }, "Hi"),
+    );
+    const { cssText } = F.collectStyleAttributeCss(rawForDeps, "ua-dep");
+    const dep = F.uaDepCssContent("/_ua/app/inline.css", cssText, {
+      emit: "link",
+    });
+    assertEquals(
+      dep.canonicalSource,
+      "div, #app { color:red; }\ndiv span.x.y { margin:0; }",
+    );
+    const html = F.emitStyleAttributeCss(rawForEmit, "ua-dep");
+    assertEquals(
+      F.render(html),
+      `<div id="app"><span class="x y">Hi</span></div>`,
+    );
+  });
+});
+
 Deno.test("browser user agent (UA) dependencies: normalize + head tags", async (t) => {
   await t.step("normalizeUaRoute: infers and preserves `as`", () => {
     const css = F.normalizeUaRoute(

@@ -430,6 +430,131 @@ export function styleText(
 
 export const css = styleText;
 
+export type StyleAttributeEmitStrategy = "inline" | "head" | "ua-dep";
+
+export type StyleAttributeCssExtraction = {
+  readonly html: RawHtml;
+  readonly cssText: string;
+};
+
+function getElementId(props: Record<string, unknown>): string | undefined {
+  const id = props.id ?? props.ID;
+  if (typeof id === "string") return id;
+  if (typeof id === "number") return String(id);
+  return undefined;
+}
+
+function getClassTokens(props: Record<string, unknown>): string[] {
+  const value = ("class" in props ? props.class : props.className) as unknown;
+  if (typeof value === "string") {
+    return value.split(/\s+/).filter((t) => t.trim() !== "");
+  }
+  if (Array.isArray(value)) {
+    return value.map((v) => String(v)).filter((t) => t.trim() !== "");
+  }
+  if (value == null) return [];
+  return [String(value)];
+}
+
+function combineRawHtml(...parts: RawHtml[]): RawHtml {
+  const nodes: RootContent[] = [];
+  let raw = "";
+  for (const part of parts) {
+    raw += part.__rawHtml;
+    if (part.__nodes) nodes.push(...part.__nodes);
+    else nodes.push(...parseTrustedHtmlToNodes(part.__rawHtml));
+  }
+  return { __rawHtml: raw, __nodes: nodes };
+}
+
+export function collectStyleAttributeCss(
+  raw: RawHtml,
+  strategy?: StyleAttributeEmitStrategy,
+  baseSelectorPath: string[] = [],
+  extraCssText = "",
+): StyleAttributeCssExtraction {
+  if ((strategy !== "head" && strategy !== "ua-dep") || !raw.__nodes) {
+    return { html: raw, cssText: "" };
+  }
+
+  const rules: string[] = [];
+  const seenRules = new Set<string>();
+
+  const visit = (node: RootContent, path: string[]): void => {
+    if (node.type === "element") {
+      const element = node as Element;
+      const props = (element.properties ??= {}) as Record<string, unknown>;
+      const styleText = props.style;
+      if (typeof styleText === "string" && styleText.trim() !== "") {
+        delete props.style;
+        const id = getElementId(props);
+        const classTokens = getClassTokens(props);
+        const nodeSelector = classTokens.length > 0
+          ? `${element.tagName}.${classTokens.join(".")}`
+          : element.tagName;
+        const cascadeSelector = [...path, nodeSelector].join(" ");
+
+        const selectors: string[] = [];
+        if (cascadeSelector) selectors.push(cascadeSelector);
+        if (id) selectors.push(`#${id}`);
+
+        const selectorKey = selectors.join(", ");
+        const ruleBody = styleText.trim().endsWith(";")
+          ? styleText.trim()
+          : `${styleText.trim()};`;
+        const rule = `${selectorKey} { ${ruleBody} }`;
+        if (!seenRules.has(rule)) {
+          seenRules.add(rule);
+          rules.push(rule);
+        }
+      }
+      const classTokens = getClassTokens(props);
+      const nodeSelector = classTokens.length > 0
+        ? `${element.tagName}.${classTokens.join(".")}`
+        : element.tagName;
+      const nextPath = [...path, nodeSelector];
+      if ("children" in node && Array.isArray(node.children)) {
+        for (const child of node.children) {
+          visit(child as RootContent, nextPath);
+        }
+      }
+      return;
+    }
+    if ("children" in node && Array.isArray(node.children)) {
+      for (const child of node.children) visit(child as RootContent, path);
+    }
+  };
+
+  for (const node of raw.__nodes) visit(node as RootContent, baseSelectorPath);
+
+  const cssTextParts = [
+    extraCssText.trim(),
+    rules.join("\n"),
+  ].filter((text) => text !== "");
+  if (cssTextParts.length === 0) return { html: raw, cssText: "" };
+
+  const normalized = render(raw);
+  return {
+    html: { __rawHtml: normalized, __nodes: raw.__nodes },
+    cssText: cssTextParts.join("\n"),
+  };
+}
+
+export function emitStyleAttributeCss(
+  raw: RawHtml,
+  strategy?: StyleAttributeEmitStrategy,
+  extraCssText = "",
+): RawHtml {
+  const { html, cssText } = collectStyleAttributeCss(
+    raw,
+    strategy,
+    [],
+    extraCssText,
+  );
+  if (!cssText || strategy === "ua-dep") return html;
+  return combineRawHtml(style(cssText), html);
+}
+
 export function children(builder: ChildBuilder): ChildBuilder {
   return builder;
 }

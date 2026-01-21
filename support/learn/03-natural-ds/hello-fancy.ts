@@ -176,7 +176,7 @@ const pageHtml = (): string => {
       ],
       scripts: [H.script({ type: "module", src: "/markdown.client.ts" })],
     }),
-    cssStyleEmitStrategy: "class-style-head",
+    styleAttributeEmitStrategy: "head",
   });
 
   return H.render(page);

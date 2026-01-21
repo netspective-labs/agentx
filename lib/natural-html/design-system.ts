@@ -184,21 +184,20 @@
  * without changing mental models or APIs.
  */
 import * as h from "./elements.ts";
-import type { RawHtml } from "./elements.ts";
+import type { RawHtml, StyleAttributeEmitStrategy } from "./elements.ts";
 import {
   browserUserAgentHeadTags,
+  collectStyleAttributeCss,
+  emitStyleAttributeCss,
   normalizeUaRoute,
   UaDependency,
   UaRoute,
 } from "./elements.ts";
-import type { Element, RootContent } from "hast";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
 
 type NamingKind = "layout" | "region" | "component" | "css-emit";
-
-export type CssStyleEmitStrategy = "inline" | "class-dep" | "class-style-head";
 
 export type NamingStrategy = {
   readonly elemIdValue: (suggested: string, kind: NamingKind) => string;
@@ -579,7 +578,7 @@ export type RenderOptionsFor<
   NS extends NamingStrategy = NamingStrategy,
 > = {
   readonly slots: SlotBuilders<L["slots"], Ctx, NS>;
-  readonly cssStyleEmitStrategy?: CssStyleEmitStrategy;
+  readonly styleAttributeEmitStrategy?: StyleAttributeEmitStrategy;
 };
 
 type HeadSlotsFor<
@@ -599,7 +598,7 @@ export type PageOptionsFor<
 > =
   & RenderOptionsFor<L, Ctx, NS>
   & HeadSlotsFor<L, Ctx, NS>
-  & { readonly cssStyleEmitStrategy?: CssStyleEmitStrategy };
+  & { readonly styleAttributeEmitStrategy?: StyleAttributeEmitStrategy };
 
 export type DesignSystem<
   R extends RegionsRegistry<Ctx, NS>,
@@ -729,7 +728,7 @@ export function createDesignSystem<
             layoutName as string,
             renderCtx,
             options.slots,
-            options.cssStyleEmitStrategy,
+            options.styleAttributeEmitStrategy,
           ),
         renderPretty: (layoutName, renderCtx, options) =>
           renderInternal(
@@ -742,7 +741,7 @@ export function createDesignSystem<
             layoutName as string,
             renderCtx,
             options.slots,
-            options.cssStyleEmitStrategy,
+            options.styleAttributeEmitStrategy,
           ),
         page: (layoutName, renderCtx, options) =>
           renderPageInternal(
@@ -759,7 +758,7 @@ export function createDesignSystem<
             options.headSlots as
               | Record<string, SlotBuilder<Ctx, NS>>
               | undefined,
-            options.cssStyleEmitStrategy,
+            options.styleAttributeEmitStrategy,
           ),
       };
 
@@ -790,7 +789,7 @@ function renderInternal<Ctx extends object, NS extends NamingStrategy>(
   layoutName: string,
   renderCtx: Ctx,
   layoutSlots: Record<string, SlotBuilder<Ctx, NS>>,
-  cssStyleEmitStrategy?: CssStyleEmitStrategy,
+  styleAttributeEmitStrategy?: StyleAttributeEmitStrategy,
 ): RawHtml {
   if (policy.rawPolicy) h.setRawPolicy(policy.rawPolicy);
 
@@ -840,9 +839,9 @@ function renderInternal<Ctx extends object, NS extends NamingStrategy>(
     layoutSlots,
   );
 
-  return applyCssStyleEmitStrategy(
+  return emitStyleAttributeCss(
     raw,
-    cssStyleEmitStrategy,
+    styleAttributeEmitStrategy,
     ctxBase.componentStyles.cssText(),
   );
 }
@@ -859,7 +858,7 @@ function renderPageInternal<Ctx extends object, NS extends NamingStrategy>(
   renderCtx: Ctx,
   layoutSlots: Record<string, SlotBuilder<Ctx, NS>>,
   headSlotsIn: Record<string, SlotBuilder<Ctx, NS>> | undefined,
-  cssStyleEmitStrategy?: CssStyleEmitStrategy,
+  styleAttributeEmitStrategy?: StyleAttributeEmitStrategy,
 ): RawHtml {
   if (policy.rawPolicy) h.setRawPolicy(policy.rawPolicy);
 
@@ -930,20 +929,20 @@ function renderPageInternal<Ctx extends object, NS extends NamingStrategy>(
   }
 
   const bodyRaw = invokeLayout(layouts, ctxBase, api, layoutName, layoutSlots);
-  const { html: body, cssText } = extractInlineStylesForClassStrategy(
+  const { html: body, cssText } = collectStyleAttributeCss(
     bodyRaw,
-    cssStyleEmitStrategy,
+    styleAttributeEmitStrategy,
     ["body"],
     ctxBase.componentStyles.cssText(),
   );
-  if (cssText && cssStyleEmitStrategy === "class-style-head") {
+  if (cssText && styleAttributeEmitStrategy === "head") {
     headChildren.unshift(h.style(cssText));
     headChildren.unshift(browserUserAgentHeadTags(baseDeps));
   } else {
-    const uaDeps = cssText && cssStyleEmitStrategy === "class-dep"
+    const uaDeps = cssText && styleAttributeEmitStrategy === "ua-dep"
       ? [
         ...baseDeps,
-        h.uaDepCssContent(cssStyleMountPoint(dsName), cssText, {
+        h.uaDepCssContent(styleAttributeCssMountPoint(dsName), cssText, {
           emit: "link",
         }),
       ]
@@ -960,127 +959,9 @@ function renderPageInternal<Ctx extends object, NS extends NamingStrategy>(
   return combineHast(doc, page);
 }
 
-type InlineStyleExtraction = {
-  readonly html: RawHtml;
-  readonly cssText: string;
-};
-
-function cssStyleMountPoint(dsName: string): string {
+function styleAttributeCssMountPoint(dsName: string): string {
   const safe = dsName.replace(/[^a-zA-Z0-9_-]+/g, "-").replaceAll("--", "-");
   return `/_ua/${safe}/inline.css`;
-}
-
-function getElementId(props: Record<string, unknown>): string | undefined {
-  const id = props.id ?? props.ID;
-  if (typeof id === "string") return id;
-  if (typeof id === "number") return String(id);
-  return undefined;
-}
-
-function getClassTokens(props: Record<string, unknown>): string[] {
-  const value = ("class" in props ? props.class : props.className) as unknown;
-  if (typeof value === "string") {
-    return value.split(/\s+/).filter((t) => t.trim() !== "");
-  }
-  if (Array.isArray(value)) {
-    return value.map((v) => String(v)).filter((t) => t.trim() !== "");
-  }
-  if (value == null) return [];
-  return [String(value)];
-}
-
-function extractInlineStylesForClassStrategy(
-  raw: RawHtml,
-  cssStyleEmitStrategy?: CssStyleEmitStrategy,
-  basePath: string[] = [],
-  componentStylesCssText = "",
-): InlineStyleExtraction {
-  if (
-    (cssStyleEmitStrategy !== "class-dep" &&
-      cssStyleEmitStrategy !== "class-style-head") || !raw.__nodes
-  ) {
-    return { html: raw, cssText: "" };
-  }
-
-  const rules: string[] = [];
-  const seenRules = new Set<string>();
-
-  const visit = (node: RootContent, path: string[]): void => {
-    if (node.type === "element") {
-      const element = node as Element;
-      const props = (element.properties ??= {}) as Record<string, unknown>;
-      const styleText = props.style;
-      if (typeof styleText === "string" && styleText.trim() !== "") {
-        delete props.style;
-        const id = getElementId(props);
-        const classTokens = getClassTokens(props);
-        const nodeSelector = classTokens.length > 0
-          ? `${element.tagName}.${classTokens.join(".")}`
-          : element.tagName;
-        const cascadeSelector = [...path, nodeSelector].join(" ");
-
-        const selectors: string[] = [];
-        if (cascadeSelector) selectors.push(cascadeSelector);
-        if (id) selectors.push(`#${id}`);
-
-        const selectorKey = selectors.join(", ");
-        const ruleBody = styleText.trim().endsWith(";")
-          ? styleText.trim()
-          : `${styleText.trim()};`;
-        const rule = `${selectorKey} { ${ruleBody} }`;
-        if (!seenRules.has(rule)) {
-          seenRules.add(rule);
-          rules.push(rule);
-        }
-      }
-      const classTokens = getClassTokens(props);
-      const nodeSelector = classTokens.length > 0
-        ? `${element.tagName}.${classTokens.join(".")}`
-        : element.tagName;
-      const nextPath = [...path, nodeSelector];
-      if ("children" in node && Array.isArray(node.children)) {
-        for (const child of node.children) {
-          visit(child as RootContent, nextPath);
-        }
-      }
-      return;
-    }
-    if ("children" in node && Array.isArray(node.children)) {
-      for (const child of node.children) visit(child as RootContent, path);
-    }
-  };
-
-  for (const node of raw.__nodes) visit(node as RootContent, basePath);
-
-  const cssTextParts = [
-    componentStylesCssText.trim(),
-    rules.join("\n"),
-  ].filter((text) => text !== "");
-  if (cssTextParts.length === 0) return { html: raw, cssText: "" };
-
-  const normalized = h.render(raw);
-  return {
-    html: { __rawHtml: normalized, __nodes: raw.__nodes },
-    cssText: cssTextParts.join("\n"),
-  };
-}
-
-function applyCssStyleEmitStrategy(
-  raw: RawHtml,
-  cssStyleEmitStrategy?: CssStyleEmitStrategy,
-  componentStylesCssText = "",
-): RawHtml {
-  const effective = cssStyleEmitStrategy === "class-dep"
-    ? "class-style-head"
-    : cssStyleEmitStrategy;
-  const { html, cssText } = extractInlineStylesForClassStrategy(
-    raw,
-    effective,
-    [],
-    componentStylesCssText,
-  );
-  if (!cssText) return html;
-  return combineHast(h.style(cssText), html);
 }
 
 function createComponentStyleRegistry(

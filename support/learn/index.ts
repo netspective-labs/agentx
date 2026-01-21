@@ -50,6 +50,14 @@ const resources = [
     port: 7665,
   },
   {
+    id: "hello",
+    name: "Hello",
+    description: "simple static text with Natural DS",
+    path: "support/learn/03-natural-ds/hello.ts",
+    entry: "./03-natural-ds/hello.ts",
+    port: 7331,
+  },
+  {
     id: "hello-fancy",
     name: "Hello Fancy",
     description: "client-side markdown preview app with Natural DS",
