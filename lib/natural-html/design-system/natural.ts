@@ -1995,7 +1995,9 @@ export const colorSwatch = defineComponent<ColorSwatchProps, RenderInput>(
   contentStyles,
   (ctx, props) => {
     const previewId = ctx.naming.elemIdValue(
-      `color-preview-${normalizeTabId(props.name)}-${normalizeTabId(props.value)}`,
+      `color-preview-${normalizeTabId(props.name)}-${
+        normalizeTabId(props.value)
+      }`,
       "component",
     );
     return h.div(
