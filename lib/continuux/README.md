@@ -12,6 +12,31 @@ side rendering. The emphasis is on continuity of behavior and intent across the
 server client boundary, not on client side reimplementation of application
 logic.
 
+If you have used HTMX, Datastar, Express, Hono, or Koa, Continuux will feel
+familiar in spirit, but it is stricter, typed end to end, and designed to be
+maintained by AI as well as humans.
+
+## What Continuux provides (and what it is similar to)
+
+Continuux is a small stack of cooperating modules rather than a monolith. The
+pieces are intentionally small and explicit:
+
+- `http.ts` is a Fetch-native, typed HTTP core similar to Express or Hono, but
+  with compile-time route param inference, explicit state lifetimes, and
+  type-safe SSE.
+- `interaction.ts` defines the interaction envelope and dispatch flow, similar
+  to a typed event protocol layer.
+- `interaction-html.ts` is the developer-facing hypermedia surface, similar to
+  HTMX/Datastar, but with typed action specs and no stringly attributes.
+- `interaction-browser-ua.js` is a tiny browser user agent runtime, similar to
+  HTMX’s client, but purpose-built for typed envelopes and SSE.
+- `bundle.ts` is a lightweight, in-memory module bundler, similar to a tiny
+  dev-server bundler (not a full build pipeline).
+- `http-fs-routes.ts` provides file-based routing similar to Next.js or Astro,
+  but adapted to Deno and the Continuux typed router.
+- `http-proxy.ts` is a typed reverse proxy middleware, similar to
+  http-proxy-middleware, with shared transform hooks and strict controls.
+
 ## Continuux is an AI-first dependency-free library
 
 Continuux is designed from the outset to be AI-first and dependency-free, with
@@ -123,8 +148,10 @@ Playwright tests validate:
 - That JavaScript instructions sent over SSE execute as intended
 
 Crucially, these tests do not mock the browser user agent. They exercise the
-real runtime end to end. This ensures that changes made by AI systems are
-validated against actual browser behavior, not simulated assumptions.
+real runtime end to end by starting real HTTP servers, performing round-trip
+requests, and asserting on real DOM state. This ensures that changes made by AI
+systems are validated against actual browser behavior, not simulated
+assumptions.
 
 ### Determinism as a hard requirement
 
@@ -132,6 +159,7 @@ A core rule of Continuux development is that no feature should be added unless
 it can be fully end to end tested deterministically.
 
 If a feature cannot be tested reliably, it cannot be safely maintained by AI.
+Without strong tests, AI maintenance is not possible.
 Non-deterministic behavior such as race conditions, timing-sensitive logic,
 hidden global state, or reliance on external services without strict control all
 undermine AI-driven maintenance.
