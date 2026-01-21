@@ -1003,6 +1003,7 @@ function extractInlineStylesForClassStrategy(
   }
 
   const rules: string[] = [];
+  const seenRules = new Set<string>();
 
   const visit = (node: RootContent, path: string[]): void => {
     if (node.type === "element") {
@@ -1026,7 +1027,11 @@ function extractInlineStylesForClassStrategy(
         const ruleBody = styleText.trim().endsWith(";")
           ? styleText.trim()
           : `${styleText.trim()};`;
-        rules.push(`${selectorKey} { ${ruleBody} }`);
+        const rule = `${selectorKey} { ${ruleBody} }`;
+        if (!seenRules.has(rule)) {
+          seenRules.add(rule);
+          rules.push(rule);
+        }
       }
       const classTokens = getClassTokens(props);
       const nodeSelector = classTokens.length > 0
@@ -1092,13 +1097,18 @@ function createComponentStyleRegistry(
     cssText: () => {
       if (stylesByComponent.size === 0) return "";
       const rules: string[] = [];
+      const seenRules = new Set<string>();
       for (const stylesheets of stylesByComponent.values()) {
         for (const stylesheet of stylesheets) {
           for (const [classToken, style] of Object.entries(stylesheet)) {
             const ruleBody = h.styleText(style);
             if (!ruleBody) continue;
             const selector = `.${naming.className(classToken, "component")}`;
-            rules.push(`${selector} { ${ruleBody} }`);
+            const rule = `${selector} { ${ruleBody} }`;
+            if (!seenRules.has(rule)) {
+              seenRules.add(rule);
+              rules.push(rule);
+            }
           }
         }
       }
