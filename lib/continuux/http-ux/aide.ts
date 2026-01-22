@@ -48,6 +48,7 @@ const DEFAULT_INSPECTOR_SELECTOR = "sse-inspector";
 const DEFAULT_INSPECTOR_CACHE = "no-store";
 const DEFAULT_INSPECTOR_ATTEMPTS = 20;
 const DEFAULT_INSPECTOR_DELAY_MS = 150;
+
 export const createSseDiagnostics = <
   E extends Record<string, unknown>,
   D extends keyof E,
@@ -135,13 +136,18 @@ export const createSseDiagnostics = <
           }
           return;
         }
-        const handler = (event) => {
+        const handlerFor = (name) => (event) => {
           if (typeof inspector.recordEvent !== "function") return;
-          inspector.recordEvent(event);
+          inspector.recordEvent(event, {
+            eventName: name,
+            type: name,
+            source: "inspector",
+            diagConnection: name === ${JSON.stringify("connection")},
+          });
         };
         const events = [${eventList}];
         for (const name of events) {
-          aide.on(name, handler);
+          aide.on(name, handlerFor(name));
         }
       };
       attachSseInspector();
