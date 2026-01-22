@@ -1,0 +1,31 @@
+{
+  "resourceType": "Questionnaire",
+  "id": "simple",
+  "title": "Simple Survey",
+  "description": "Tell us about yourself",
+  "item": [
+    {
+      "linkId": "name",
+      "text": "Full name",
+      "definition": "First and last name",
+      "type": "string",
+      "required": true,
+      "initialString": "Jordan"
+    },
+    {
+      "linkId": "subscribe",
+      "text": "Newsletter",
+      "type": "boolean"
+    },
+    {
+      "linkId": "favorite_color",
+      "text": "Favorite color",
+      "definition": "Pick one",
+      "type": "choice",
+      "answerOption": [
+        { "valueString": "red", "valueCoding": { "display": "Red" } },
+        { "valueString": "blue", "valueCoding": { "display": "Blue" } }
+      ]
+    }
+  ]
+}
