@@ -20,7 +20,7 @@ import { z } from "@zod";
 /**
  * Narrow the Zod object shape we can work with.
  */
-type DialogZodObject = z.ZodObject<z.ZodRawShape>;
+export type DialogZodObject = z.ZodObject<z.ZodRawShape>;
 
 type DialogSchemaShape<Schema extends DialogZodObject> = Schema["_def"] extends
   {
@@ -29,7 +29,7 @@ type DialogSchemaShape<Schema extends DialogZodObject> = Schema["_def"] extends
   : never
   : never;
 
-type DialogFieldName<Schema extends DialogZodObject> =
+export type DialogFieldName<Schema extends DialogZodObject> =
   & keyof DialogSchemaShape<Schema>
   & string;
 
