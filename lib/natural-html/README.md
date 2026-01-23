@@ -12,7 +12,7 @@ composition that emits HAST (and HTML downstream), so the same code works in
 interactive or non-interactive contexts, with or without a browser DOM. It is
 safe for static site generation, batch rendering, tests, and server responses.
 
-Natural HTML is the foundation for Junxion UX server-rendered UI and the Natural
+Natural HTML is the foundation for Autarkic server-rendered UI and the Natural
 Design System runtime.
 
 ## Why it exists
@@ -144,14 +144,14 @@ Key properties:
 ### UA dependencies (integrated CSS and JS)
 
 Natural HTML includes first-class modeling for user agent dependencies such as
-CSS, JS modules, and fonts. Design systems and dialogs declare these dependencies
-as data so the server can expose routes and emit correct `<link>` and `<script>`
-tags.
+CSS, JS modules, and fonts. Design systems and dialogs declare these
+dependencies as data so the server can expose routes and emit correct `<link>`
+and `<script>` tags.
 
 This enables integrated styling and behavior without relying on external CSS
 frameworks or build-time tooling.
 
-## How it fits in Junxion UX
+## How it fits in Autarkic
 
 Natural HTML is the rendering substrate. Dialogs provide schema-driven form
 infrastructure. Continuux handles typed interaction contracts and SSE. Natural
@@ -176,3 +176,4 @@ const page = h.render(
     ),
   ),
 );
+```

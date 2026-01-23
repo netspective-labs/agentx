@@ -1,4 +1,4 @@
-name: Run Junxion UX Tests
+name: Run Autarkic Tests
 
 on:
   push:

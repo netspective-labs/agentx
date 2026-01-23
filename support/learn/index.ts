@@ -129,7 +129,7 @@ const indexHtml = `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Junxion UX Learning Resources</title>
+    <title>Autarkic UX Learning Resources</title>
   </head>
   <frameset rows="56,*" frameborder="0" border="0" framespacing="0">
     <frame src="/frame-top" name="resourceTop" />
@@ -301,7 +301,7 @@ const blankFrameHtml = `<!doctype html>
         <header>
           <h1>Learning Resources Server</h1>
           <p>
-            The Junxion UX learning hub catalogs ContinuUX, Natural HTML, and
+            The Autarkic learning hub catalogs ContinuUX, Natural HTML, and
             Natural DS samples. Selecting a resource spins up its Deno process,
             proxies the port, and renders the experience in this frame so you can
             inspect how each layer fits together.
