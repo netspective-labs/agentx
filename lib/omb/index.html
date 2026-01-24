@@ -327,7 +327,10 @@
       <test-float>3.1415926535</test-float>
       <test-double>3.1415926535897932384626433</test-double>
       <test-file>DataModelSchemaTest.xml</test-file>
-      <test-string-array omb:type="text-list"
+
+      <test-string-list omb:type="text-list"
+      >item1, item2, item3</test-string-list>
+      <test-string-array omb:type-as="z.string().transform(splitCsv).parse(raw)"
       >item1, item2, item3</test-string-array>
 
       <xdm:include file="DataModelSchemaTest-include.xml"></xdm:include>

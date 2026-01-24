@@ -113,6 +113,38 @@ node.testLong; // → 1234567890
 node[".tag"].attrs.integer; // → "11"
 ```
 
+## Pre-defined typing with `omb:type`
+
+```xml
+<test-string-array omb:type="text-list-safe">
+  item1, item2, item3
+</test-string-array>
+```
+
+Behavior:
+
+- The raw text (`"item1, item2, item3"`) is always preserved at
+  `node[".tag"].rawValue`
+- The typed result is stored at `node[".tag"].value`
+- If the element is treated as a child-as-attribute, the parent property getter
+  returns the typed value
+- Raw strings are always stored in `.tag.attrs`
+
+Named typings are resolved via:
+
+- `typedValueByName(name)` option, if provided
+- Built-in defaults (for example `text-list`, `text-list-safe`)
+
+This is the recommended and safest way to apply custom typing logic.
+
+## Inline typing with `omb:type-as`
+
+For advanced or ad-hoc use cases, OMB also supports inline typing expressions
+via the special attribute `omb:type-as`.
+
+`omb:type-as` treats its value as the body of a typed-value expression and
+evaluates it at runtime.
+
 ## Child elements as attributes
 
 OMB supports treating **simple child elements** as attributes instead of

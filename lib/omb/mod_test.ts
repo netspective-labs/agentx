@@ -47,7 +47,12 @@ function startSingleFileServer(allowPaths: Record<string, string>) {
   const controller = new AbortController();
 
   const server = Deno.serve(
-    { hostname: "127.0.0.1", port: 0, signal: controller.signal },
+    {
+      hostname: "127.0.0.1",
+      port: 0,
+      signal: controller.signal,
+      onListen: () => {},
+    },
     async (req) => {
       const url = new URL(req.url);
       const mapped = allowPaths[url.pathname];
@@ -158,6 +163,7 @@ const GOLDEN = {
       "testDouble": "3.1415926535897932384626433",
       "testFile": "DataModelSchemaTest.xml",
       "testStringArray": "item1, item2, item3",
+      "testStringList": "item1, item2, item3",
     },
     "content": [
       "\n      PCDATA in root.\n\n      ",
@@ -317,11 +323,8 @@ const GOLDEN = {
   "testFloat": 3.1415926535,
   "testDouble": 3.141592653589793,
   "testFile": "DataModelSchemaTest.xml",
-  "testStringArray": [
-    "item1",
-    "item2",
-    "item3",
-  ],
+  "testStringArray": ["item1", "item2", "item3"],
+  "testStringList": ["item1", "item2", "item3"],
   "xdmInclude": [
     {
       ".tag": {
