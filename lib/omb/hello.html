@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>OMB Hello</title>
+
+    <!-- json-viewer (UMD bundle; NOT the ESM dist that throws "import outside module") -->
+    <script
+      src="https://unpkg.com/@alenaksu/json-viewer@2.1.2/dist/json-viewer.bundle.js"
+    ></script>
+  </head>
+
+  <body>
+    <my-element id="ombRoot" omb:src="./fixtures/fixture-01.xml"></my-element>
+    <json-viewer id="viewer"></json-viewer>
+
+    <script type="module">
+      import { ObjectModelBuilderElement } from "./omb.js";
+
+      class MyElement extends ObjectModelBuilderElement {}
+      if (!customElements.get("my-element")) {
+        customElements.define("my-element", MyElement);
+      }
+
+      const root =
+        /** @type {any} */ (document.querySelector("#ombRoot"));
+      const viewer =
+        /** @type {any} */ (document.querySelector("#viewer"));
+
+      function render() {
+        const model = root.model;
+        if (!model) return;
+        viewer.data = JSON.parse(
+          JSON.stringify(model.toJSON({ withTags: true })),
+        );
+      }
+
+      root.addEventListener("omb:built", render);
+      root.addEventListener("omb:error", (e) => {
+        viewer.data = { error: String(e?.detail?.error ?? e) };
+      });
+
+      // Trigger initial build if the element connectedCallback hasn't yet.
+      if (!root.model) {
+        root.rebuild().catch(() => {});
+      }
+    </script>
+  </body>
+</html>
