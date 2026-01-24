@@ -1,6 +1,8 @@
 <?xml version="1.0"?>
 
-<root root-attr-1="root-attr-1-text-in-attr" xmlns:xdm="http://www.netspective.org/Framework/Commons/XMLDataModel">
+<root root-attr-1="root-attr-1-text-in-attr" 
+  xmlns:omb="http://www.netspective.com/labs/autarkic"
+  xmlns:xdm="http://www.netspective.org/Framework/Commons/XMLDataModel">
 
     PCDATA in root.
 
@@ -16,7 +18,7 @@
     <test-float>3.1415926535</test-float>
     <test-double>3.1415926535897932384626433</test-double>
     <test-file>DataModelSchemaTest.xml</test-file>
-    <test-string-array>item1, item2, item3</test-string-array>
+    <test-string-array omb:type="text-list">item1, item2, item3</test-string-array>
 
     <xdm:include file="DataModelSchemaTest-include.xml"/>
 

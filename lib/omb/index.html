@@ -2,11 +2,12 @@
 <!--
   Object Model Builder (OMB) Playground
 
-  Left: README.md rendered via zero-md (GitHub-flavored markdown + Mermaid fences)
-  Right: tabs
-    - Original XML: serialized live from the DOM and highlighted with highlight.js
-    - Source XML: the XML used as input when omb:src is set (local file or remote URL)
-    - Transformed JSON: OMB model rendered with json-viewer
+  Strategy update:
+  - Live DOM mode: use the factory builder (no async, no fetch, deterministic).
+  - External XML mode (omb:src): use the custom element (it owns fetch+parse+rebuild).
+  - If XML parse/fetch fails, show the error in BOTH:
+    - Source XML pane (comment), and
+    - Transformed JSON pane (structured error object), so it is impossible to miss.
 -->
 <html lang="en">
   <head>
@@ -14,20 +15,17 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>Object Model Builder (OMB) Playground</title>
 
-    <!-- Mermaid (for ```mermaid fences rendered by zero-md) -->
     <script type="module">
       import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs";
       window.mermaid = mermaid;
       mermaid.initialize({ startOnLoad: true });
     </script>
 
-    <!-- zero-md (auto-registers <zero-md>) -->
     <script
       type="module"
       src="https://cdn.jsdelivr.net/npm/zero-md@3?register"
     ></script>
 
-    <!-- highlight.js (XML syntax highlighting) -->
     <link
       rel="stylesheet"
       href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css"
@@ -39,7 +37,6 @@
       src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/xml.min.js"
     ></script>
 
-    <!-- json-viewer (UMD bundle; NOT the ESM dist that throws "import outside module") -->
     <script
       src="https://unpkg.com/@alenaksu/json-viewer@2.1.2/dist/json-viewer.bundle.js"
     ></script>
@@ -48,7 +45,6 @@
       :root {
         color-scheme: light dark;
       }
-
       body {
         margin: 0;
         font-family:
@@ -56,7 +52,6 @@
           sans-serif;
         background: #f7fbfb;
       }
-
       header {
         padding: 10px 14px;
         border-bottom: 1px solid rgba(0, 0, 0, 0.15);
@@ -70,12 +65,10 @@
         background: rgba(255, 255, 255, 0.75);
         backdrop-filter: blur(6px);
       }
-
       header .title {
         font-weight: 650;
         font-size: 18px;
       }
-
       header button {
         font: inherit;
         padding: 6px 10px;
@@ -84,30 +77,25 @@
         background: transparent;
         cursor: pointer;
       }
-
       main {
         display: grid;
         grid-template-columns: 1fr 1fr;
         height: calc(100vh - 52px);
       }
-
       .pane {
         overflow: auto;
         padding: 16px;
       }
-
       .left {
         border-right: 1px solid rgba(0, 0, 0, 0.15);
         background: rgba(255, 255, 255, 0.75);
       }
-
       .right {
         background: rgba(248, 250, 252, 0.75);
         display: flex;
         flex-direction: column;
         gap: 10px;
       }
-
       .controls {
         display: flex;
         flex-wrap: wrap;
@@ -118,7 +106,6 @@
         border-radius: 12px;
         background: rgba(255, 255, 255, 0.55);
       }
-
       .controls label {
         display: inline-flex;
         align-items: center;
@@ -126,7 +113,6 @@
         font-size: 13px;
         color: rgba(15, 23, 42, 0.85);
       }
-
       .controls input[type="text"] {
         font: inherit;
         padding: 6px 8px;
@@ -134,12 +120,10 @@
         border: 1px solid rgba(0, 0, 0, 0.2);
         min-width: 320px;
       }
-
       .controls input[type="file"] {
         font: inherit;
         max-width: 360px;
       }
-
       .controls .mini {
         font: inherit;
         padding: 6px 10px;
@@ -148,7 +132,6 @@
         background: transparent;
         cursor: pointer;
       }
-
       .tabs {
         display: inline-flex;
         border: 1px solid rgba(0, 0, 0, 0.18);
@@ -157,7 +140,6 @@
         background: rgba(255, 255, 255, 0.55);
         align-self: flex-start;
       }
-
       .tabs button {
         font: inherit;
         border: 0;
@@ -166,33 +148,26 @@
         cursor: pointer;
         color: rgba(15, 23, 42, 0.85);
       }
-
       .tabs button + button {
         border-left: 1px solid rgba(0, 0, 0, 0.12);
       }
-
       .tabs button.active {
         background: rgba(15, 23, 42, 0.08);
         font-weight: 650;
       }
-
       .hint {
         margin: 0;
         color: rgba(0, 0, 0, 0.65);
         font-size: 13px;
       }
-
       .tab-content {
         display: none;
         flex: 1 1 auto;
         min-height: 0;
       }
-
       .tab-content.active {
         display: block;
       }
-
-      /* XML display */
       pre {
         margin: 8px 0 0;
         background: #0b1020;
@@ -201,7 +176,6 @@
         overflow: auto;
         height: calc(100vh - 220px);
       }
-
       pre code {
         display: block;
         font-family:
@@ -210,8 +184,6 @@
         font-size: 13px;
         line-height: 1.45;
       }
-
-      /* JSON viewer styling */
       json-viewer {
         display: block;
         height: calc(100vh - 220px);
@@ -241,77 +213,60 @@
         --preview-color: #deae8f;
         --highlight-color: #ff4d4d;
       }
-
       json-viewer::part(row) {
         margin: 2px 0;
       }
-
       json-viewer::part(children) {
         padding-left: 0.35em;
       }
-
-      /* Dim structural keys */
       json-viewer::part(property)[data-key=".tag"],
       json-viewer::part(property)[data-key=".children"] {
         color: rgba(180, 190, 205, 0.55);
         font-style: italic;
       }
-
       @media (prefers-color-scheme: dark) {
         header {
           border-bottom-color: rgba(255, 255, 255, 0.14);
           background: rgba(15, 23, 42, 0.7);
         }
-
         header button {
           border-color: rgba(255, 255, 255, 0.22);
         }
-
         .left {
           border-right-color: rgba(255, 255, 255, 0.14);
           background: rgba(15, 23, 42, 0.55);
         }
-
         .right {
           background: rgba(2, 6, 23, 0.55);
         }
-
         .controls {
           border-color: rgba(255, 255, 255, 0.16);
           background: rgba(15, 23, 42, 0.35);
         }
-
         .controls label {
           color: rgba(226, 232, 240, 0.85);
         }
-
         .controls input[type="text"] {
           border-color: rgba(255, 255, 255, 0.22);
           background: rgba(2, 6, 23, 0.2);
           color: rgba(226, 232, 240, 0.92);
         }
-
         .controls .mini {
           border-color: rgba(255, 255, 255, 0.22);
         }
-
         .hint {
           color: rgba(255, 255, 255, 0.65);
         }
-
         .tabs {
           border-color: rgba(255, 255, 255, 0.16);
           background: rgba(15, 23, 42, 0.35);
         }
-
         .tabs button {
           color: rgba(226, 232, 240, 0.85);
         }
-
         .tabs button + button {
           border-left-color: rgba(255, 255, 255, 0.12);
         }
-
         .tabs button.active {
           background: rgba(226, 232, 240, 0.12);
         }
@@ -421,7 +376,6 @@
       </div>
     </main>
 
-    <!-- Example markup under <my-element> -->
     <my-element
       id="ombRoot"
       root-attr-1="root-attr-1-text-in-attr"
@@ -471,6 +425,7 @@
 
     <script type="module">
       import {
+        createOmbBuilder,
         defaultTypedValue,
         ObjectModelBuilderElement,
       } from "./omb.js";
@@ -550,6 +505,20 @@
       /** @type {string | null} */
       let lastBlobUrl = null;
 
+      /** @type {unknown | null} */
+      let lastOmbError = null;
+
+      // Factory builder used for Live DOM mode (sync, no fetch).
+      const factory = createOmbBuilder({
+        typedValue: (raw, tag) => defaultTypedValue(raw, tag),
+        typedValueByName: root.options?.typedValueByName,
+        isChildElemAttr: root.options?.isChildElemAttr,
+        ignoreWhitespaceText: root.options?.ignoreWhitespaceText,
+        ignoreComments: root.options?.ignoreComments,
+        ignoreElement: root.options?.ignoreElement,
+        createElement: root.options?.createElement,
+      });
+
       function setTab(which) {
         const xmlActive = which === "xml";
         const srcActive = which === "src";
@@ -563,9 +532,9 @@
         tabSrc.setAttribute("aria-selected", String(srcActive));
         tabJson.setAttribute("aria-selected", String(jsonActive));
 
-        panelXml.classList.toggle("active", xmlActive);
-        panelSrc.classList.toggle("active", srcActive);
-        panelJson.classList.toggle("active", jsonActive);
+        panelXml?.classList.toggle("active", xmlActive);
+        panelSrc?.classList.toggle("active", srcActive);
+        panelJson?.classList.toggle("active", jsonActive);
       }
 
       tabXml.addEventListener("click", () => setTab("xml"));
@@ -577,17 +546,22 @@
         const xmlStr = xml.replace(reg, "$1\n$2$3");
         const padChar = "  ";
         let pad = 0;
-        return xmlStr.split("\n").map((line) => {
-          if (line.match(/^<\//)) pad = Math.max(pad - 1, 0);
-          const indent = padChar.repeat(pad);
-          if (
-            line.match(/^<[^!?].*[^/]>$/) && !line.startsWith("</") &&
-            !line.includes("/>") && !line.match(/^<.*>.*<\/.*>$/)
-          ) {
-            pad += 1;
-          }
-          return indent + line;
-        }).join("\n");
+        return xmlStr
+          .split("\n")
+          .map((line) => {
+            if (line.match(/^<\//)) pad = Math.max(pad - 1, 0);
+            const indent = padChar.repeat(pad);
+            if (
+              line.match(/^<[^!?].*[^/]>$/) &&
+              !line.startsWith("</") &&
+              !line.includes("/>") &&
+              !line.match(/^<.*>.*<\/.*>$/)
+            ) {
+              pad += 1;
+            }
+            return indent + line;
+          })
+          .join("\n");
       }
 
       function highlightXml(codeEl) {
@@ -602,6 +576,19 @@
         if (!doHighlight()) setTimeout(doHighlight, 50);
       }
 
+      function toErrorJson(err) {
+        const e = /** @type {any} */ (err);
+        return {
+          ok: false,
+          kind: "omb:error",
+          message: String(e?.message ?? e ?? "Unknown error"),
+          name: typeof e?.name === "string" ? e.name : undefined,
+          stack: typeof e?.stack === "string" ? e.stack : undefined,
+          // keep detail payloads visible if provided
+          detail: e?.detail ?? undefined,
+        };
+      }
+
       function renderXml() {
         const raw = new XMLSerializer().serializeToString(root);
         xmlCode.textContent = formatXml(raw);
@@ -614,6 +601,8 @@
           srcCode.textContent = "";
           return;
         }
+
+        // If we have the exact text already (file upload or prefetch), show it.
         if (
           typeof lastSourceXmlText === "string" &&
           lastSourceXmlText.length > 0
@@ -627,7 +616,7 @@
         (async () => {
           try {
             const r = await fetch(src, {
-              headers: { "Accept": "application/xml,text/xml,*/*" },
+              headers: { Accept: "application/xml,text/xml,*/*" },
             });
             const text = await r.text();
             lastSourceXmlText = text;
@@ -641,14 +630,49 @@
         })();
       }
 
-      function renderJson() {
-        const model = root.model ?? root.rebuild();
+      function renderJsonFromModel(model) {
         const viewModel = model.toJSON({
           withTags: toggleTags.checked,
         });
         jsonViewer.data = JSON.parse(JSON.stringify(viewModel));
         if (jsonViewer.collapseAll) jsonViewer.collapseAll();
         else if (jsonViewer.expandAll) jsonViewer.expandAll();
+      }
+
+      function renderJsonError(err) {
+        jsonViewer.data = toErrorJson(err);
+        if (jsonViewer.expandAll) jsonViewer.expandAll();
+      }
+
+      function renderJson() {
+        const src = (root.getAttribute("omb:src") ?? "").trim();
+
+        // External source path: use the custom element and show parser/fetch errors in JSON.
+        if (src.length > 0) {
+          if (lastOmbError) {
+            renderJsonError(lastOmbError);
+            return;
+          }
+          if (root.model) {
+            renderJsonFromModel(root.model);
+            return;
+          }
+          // If we haven't built yet, show a placeholder instead of stale data.
+          jsonViewer.data = {
+            ok: false,
+            kind: "omb:pending",
+            message: "Waiting for omb:built or omb:error…",
+          };
+          return;
+        }
+
+        // Live DOM path: factory is authoritative (no rebuild needed).
+        try {
+          const model = factory.buildFromDomRoot(root, { host: root });
+          renderJsonFromModel(model);
+        } catch (e) {
+          renderJsonError(e);
+        }
       }
 
       function renderAll() {
@@ -664,6 +688,7 @@
           lastBlobUrl = null;
         }
         lastSourceXmlText = null;
+        lastOmbError = null;
 
         if (srcModeDom.checked) {
           root.removeAttribute("omb:src");
@@ -691,7 +716,7 @@
           // Pre-fetch for display (best effort; OMB will fetch too).
           try {
             const r = await fetch(urlText, {
-              headers: { "Accept": "application/xml,text/xml,*/*" },
+              headers: { Accept: "application/xml,text/xml,*/*" },
             });
             lastSourceXmlText = await r.text();
           } catch {
@@ -712,6 +737,7 @@
           lastBlobUrl = null;
         }
         lastSourceXmlText = null;
+        lastOmbError = null;
         xmlFile.value = "";
         xmlUrl.value = "";
         srcModeDom.checked = true;
@@ -720,15 +746,21 @@
         void root.rebuild();
       }
 
-      root.addEventListener("omb:built", () => {
+      root.addEventListener("omb:built", (e) => {
+        lastOmbError = null;
+        // ensure root.model is present (builder sets it), but trust the event detail if provided
+        if (e?.detail?.model) root.model = e.detail.model;
         renderAll();
       });
 
       root.addEventListener("omb:error", (e) => {
+        // Capture the actual error so JSON pane can show it.
+        lastOmbError = e?.detail?.error ?? new Error("omb:error");
         // keep views fresh; show whatever we can
         renderAll();
+
         // also surface the error in Source XML pane if it's empty
-        const err = e?.detail?.error;
+        const err = lastOmbError;
         if (
           err &&
           (!srcCode.textContent ||
@@ -748,7 +780,6 @@
       );
       clearSrcBtn.addEventListener("click", clearSourceSelection);
 
-      // If a file is chosen, switch mode to XML automatically (but don't apply until user clicks Apply).
       xmlFile.addEventListener("change", () => {
         if (xmlFile.files?.length) {
           srcModeXml.checked = true;
@@ -756,7 +787,6 @@
         }
       });
 
-      // If a URL is typed, switch mode to XML automatically (but don't apply until user clicks Apply).
       xmlUrl.addEventListener("input", () => {
         if ((xmlUrl.value ?? "").trim().length > 0) {
           srcModeXml.checked = true;

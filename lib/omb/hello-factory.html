@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>OMB Hello (Factory)</title>
+
+    <!-- json-viewer (UMD bundle; NOT the ESM dist that throws "import outside module") -->
+    <script
+      src="https://unpkg.com/@alenaksu/json-viewer@2.1.2/dist/json-viewer.bundle.js"
+    ></script>
+  </head>
+
+  <body>
+    <json-viewer id="viewer"></json-viewer>
+
+    <script type="module">
+      import { createOmbBuilder } from "./omb.js";
+
+      const viewer =
+        /** @type {any} */ (document.querySelector("#viewer"));
+
+      // Same fixture used by hello.html
+      const src = "./fixtures/fixture-01.xml";
+
+      const builder = createOmbBuilder();
+
+      async function loadAndRender() {
+        try {
+          const model = await builder.buildFromXmlSrc(src, {
+            // provide a host element so baseURI resolution matches document context
+            host: document.documentElement,
+          });
+
+          viewer.data = JSON.parse(
+            JSON.stringify(model.toJSON({ withTags: true })),
+          );
+        } catch (err) {
+          viewer.data = { error: String(err?.message ?? err) };
+        }
+      }
+
+      void loadAndRender();
+    </script>
+  </body>
+</html>
