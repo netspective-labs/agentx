@@ -501,7 +501,9 @@ const handlers: CxActionHandlers<
 };
 
 const app = Application.sharedState(appState);
-sseDiagnostics.mountInspectorStatic(app);
+
+// Serve the inspector module via middleware (instead of app.get(...)).
+app.use(sseDiagnostics.middleware<State, Vars>());
 
 app.get("/browser-ua-aide.js", () => cx.server.uaModuleResponse("no-store"));
 

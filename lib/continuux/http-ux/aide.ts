@@ -1,4 +1,4 @@
-import type { Application } from "../http.ts";
+import type { Middleware } from "../http.ts";
 import type { CxSseHub } from "../interaction-html.ts";
 
 export type SseDiagnosticLevel = "info" | "warn" | "error" | "debug";
@@ -154,33 +154,38 @@ export const createSseDiagnostics = <
     `;
   };
 
-  const mountInspectorStatic = <
+  const middleware = <
     State extends Record<string, unknown>,
     Vars extends Record<string, unknown>,
   >(
-    app: Application<State, Vars>,
     runtime?: SseDiagnosticsMountOpts,
-  ) => {
+  ): Middleware<State, Vars> => {
     const scriptPath = runtime?.mountPoint ?? inspectorConfig.mountPoint;
     const cacheControl = runtime?.cacheControl ??
       inspectorConfig.mountCacheControl;
 
     if (typeof scriptPath !== "string" || !scriptPath.startsWith("/")) {
-      return;
+      return async (_c, next) => await next();
     }
 
-    app.get(scriptPath, async () => {
-      const resolved = await import.meta.resolve("./sse.js");
+    return async (c, next) => {
+      if (c.req.method !== "GET") return await next();
+      if (c.url.pathname !== scriptPath) return await next();
+
+      const resolved = import.meta.resolve("./sse.js");
       const upstream = await fetch(resolved);
+
       const headers = new Headers(upstream.headers);
       headers.set("content-type", "text/javascript; charset=utf-8");
       headers.set("cache-control", cacheControl);
+      headers.delete("content-length");
+
       return new Response(upstream.body, {
         status: upstream.status,
         statusText: upstream.statusText,
         headers,
       });
-    });
+    };
   };
 
   return {
@@ -189,6 +194,6 @@ export const createSseDiagnostics = <
     connection: emitConnection,
     broadcastConnection,
     inspectorScript,
-    mountInspectorStatic,
+    middleware,
   };
 };

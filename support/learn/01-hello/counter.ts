@@ -170,11 +170,12 @@ const pageHtml = (): string => {
 };
 
 const app = Application.sharedState<State, Vars>(appState);
-sseDiagnostics.mountInspectorStatic(app);
+
+// Serve the inspector module via middleware (instead of app.get(...)).
+app.use(sseDiagnostics.middleware<State, Vars>());
 
 // Serve the unified UA module at the URL used by the page boot script.
 app.get("/browser-ua-aide.js", async () => {
-  // createCx(...).server.uaModuleResponse now serves browser-ua-aide.js
   return await cx.server.uaModuleResponse("no-store");
 });
 
