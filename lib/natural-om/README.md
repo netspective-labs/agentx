@@ -22,9 +22,10 @@ OMB can be used in **two complementary ways**:
 2. As a **pure factory-style builder** (`OmbBuilder`) with no custom elements,
    suitable for scripts, loaders, inspectors, or headless-style usage.
 
-💡 Start a local server (e.g. `serve-cwd-http`) and navigate to
-`support/learn/05-natural-om/guide.html` in the server to see an interactive
-guide which lets you read this `README.md` and see running examples.
+💡 Run `support/learn/index.ts` from the root of this project and pick _Natural
+Object Model Guide_ learning resources to get an idea for what this module does.
+You can read this `README.md` interactively using the guide and see a running
+example plus load your own.
 
 ## High-level concepts
 
