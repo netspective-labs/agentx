@@ -14,7 +14,6 @@ import {
   apiTable,
   badge,
   bodyText,
-  breadcrumbItem,
   callout,
   codeBlock,
   codeBlockEnhanced,
@@ -29,6 +28,7 @@ import {
   footerNav,
   imageWithCaption,
   keyboardShortcut,
+  NaturalBreadcrumbsBuilder,
   NaturalContextBarBuilder,
   naturalDesignSystem,
   NaturalSidebarBuilder,
@@ -143,6 +143,13 @@ const contextNavDefinitions = [
   { id: "discord", label: "Discord", icon: icons.chat },
 ];
 
+const contextNavMap = contextNavDefinitions.reduce<
+  Record<string, { readonly label: string; readonly href?: string }>
+>((map, entry) => {
+  map[entry.id] = { label: entry.label, href: entry.href };
+  return map;
+}, {} as Record<string, { readonly label: string; readonly href?: string }>);
+
 const buildContextHeader = (ctx: DsRenderCtx, active: ContextNavTarget) =>
   new NaturalContextBarBuilder(ctx)
     .withBrand({ label: "Acme Inc", iconText: "DS" })
@@ -166,12 +173,6 @@ const buildContextHeader = (ctx: DsRenderCtx, active: ContextNavTarget) =>
       chevron: icons.chevronDown,
     })
     .build();
-
-const renderBreadcrumbSeparator = () =>
-  H.span(
-    { class: "breadcrumb-separator", "aria-hidden": "true" },
-    icons.breadcrumbChevron,
-  );
 
 type GitHubSubjectId =
   | "netspective"
@@ -294,6 +295,8 @@ const gitHubSubjectOrder: readonly GitHubSubjectId[] = [
   "programmablemd",
 ];
 
+const gitHubSubjectList = gitHubSubjectOrder.map((id) => gitHubSubjects[id]);
+
 const defaultGitHubSubjectId: GitHubSubjectId = "netspective";
 
 const getGitHubSubject = (id?: string): GitHubSubject =>
@@ -345,7 +348,7 @@ const buildGitHubHeadSlots = (subject: GitHubSubject) =>
     ],
   });
 
-const pageHtml = (): string => {
+const pageHtml = (request: Request): string => {
   const page = ds.page("NaturalDoc", {}, {
     slots: {
       contextHeader: (ctx) => buildContextHeader(ctx, "docs"),
@@ -364,26 +367,18 @@ const pageHtml = (): string => {
           .withNavEntries(docsNavEntries)
           .build(),
       breadcrumbs: (ctx) =>
-        combineHast(
-          breadcrumbItem(ctx, {
-            href: "#",
-            icon: icons.home,
-            home: true,
-          }),
-          H.span(
-            { class: "breadcrumb-separator", "aria-hidden": "true" },
-            icons.breadcrumbChevron,
-          ),
-          breadcrumbItem(ctx, { label: "Documentation", href: "#" }),
-          H.span(
-            { class: "breadcrumb-separator", "aria-hidden": "true" },
-            icons.breadcrumbChevron,
-          ),
-          breadcrumbItem(ctx, {
-            label: "Design System Reference",
-            current: true,
-          }),
-        ),
+        new NaturalBreadcrumbsBuilder(ctx)
+          .withHome({ label: "Home", href: "/", icon: icons.home })
+          .withRequestTrail({
+            request,
+            contextMap: contextNavMap,
+            defaultContextId: "docs",
+          })
+          .appendMany([
+            { label: "Documentation", href: "#" },
+            { label: "Design System Reference" },
+          ])
+          .build(),
       content: (ctx) =>
         H.div(
           pageHeader(ctx, {
@@ -1159,19 +1154,37 @@ const renderGitHubBreadcrumbs = (
   ctx: DsRenderCtx,
   subject: GitHubSubject,
   repo: GitHubRepo,
+  request: Request,
 ) =>
-  combineHast(
-    breadcrumbItem(ctx, { href: "/", icon: icons.home, home: true }),
-    renderBreadcrumbSeparator(),
-    breadcrumbItem(ctx, { label: "GitHub Explorer", href: "/github" }),
-    renderBreadcrumbSeparator(),
-    breadcrumbItem(ctx, {
-      label: subject.title,
-      href: `/github/${subject.id}`,
-    }),
-    renderBreadcrumbSeparator(),
-    breadcrumbItem(ctx, { label: repo.name, current: true }),
-  );
+  new NaturalBreadcrumbsBuilder(ctx)
+    .withHome({ label: "Home", href: "/", icon: icons.home })
+    .withRequestTrail({
+      request,
+      contextMap: contextNavMap,
+      defaultContextId: "github",
+      subjects: gitHubSubjectList,
+      subject: {
+        label: subject.title,
+        href: `/github/${subject.id}`,
+      },
+      subjectLabel: (sub) => sub.title ?? sub.id,
+      subjectHref: (sub) => sub.href ?? `/github/${sub.id}`,
+      repoResolver: (slug, matchedSubject) => {
+        const target = matchedSubject ?? subject;
+        const found = target.repos.find((entry) => entry.slug === slug);
+        return found
+          ? {
+            label: found.name,
+            href: `/github/${target.id}/${found.slug}`,
+          }
+          : undefined;
+      },
+      repo: {
+        label: repo.name,
+        href: `/github/${subject.id}/${repo.slug}`,
+      },
+    })
+    .build();
 
 const renderGitHubContent = (
   ctx: DsRenderCtx,
@@ -1233,12 +1246,17 @@ const renderGitHubContent = (
   );
 };
 
-const gitHubPageHtml = (subject: GitHubSubject, repo: GitHubRepo): string => {
+const gitHubPageHtml = (
+  subject: GitHubSubject,
+  repo: GitHubRepo,
+  request: Request,
+): string => {
   const page = ds.page("NaturalDoc", {}, {
     slots: {
       contextHeader: (ctx) => buildContextHeader(ctx, "github"),
       sidebar: (ctx) => renderGitHubSidebar(ctx, subject, repo),
-      breadcrumbs: (ctx) => renderGitHubBreadcrumbs(ctx, subject, repo),
+      breadcrumbs: (ctx) =>
+        renderGitHubBreadcrumbs(ctx, subject, repo, request),
       content: (ctx) => renderGitHubContent(ctx, subject, repo),
     },
     headSlots: buildGitHubHeadSlots(subject),
@@ -1249,12 +1267,13 @@ const gitHubPageHtml = (subject: GitHubSubject, repo: GitHubRepo): string => {
 };
 
 const respondGitHubPage = (
+  request: Request,
   subjectId?: string,
   repoSlug?: string,
 ) => {
   const subject = getGitHubSubject(subjectId);
   const repo = getGitHubRepo(subject, repoSlug);
-  return htmlResponse(gitHubPageHtml(subject, repo));
+  return htmlResponse(gitHubPageHtml(subject, repo, request));
 };
 
 const githubProxyApp = Application.sharedState<State, Vars>({});
@@ -1289,13 +1308,13 @@ app.use(async (c, next) => {
   return await next();
 });
 
-app.get("/", () => htmlResponse(pageHtml()));
+app.get("/", (c) => htmlResponse(pageHtml(c.req)));
 
-app.get("/github", () => respondGitHubPage());
+app.get("/github", (c) => respondGitHubPage(c.req));
 app.get(
   "/github/:subject/:repo",
-  (c) => respondGitHubPage(c.params.subject, c.params.repo),
+  (c) => respondGitHubPage(c.req, c.params.subject, c.params.repo),
 );
-app.get("/github/:subject", (c) => respondGitHubPage(c.params.subject));
+app.get("/github/:subject", (c) => respondGitHubPage(c.req, c.params.subject));
 
 app.serve({ port: 7599 });
