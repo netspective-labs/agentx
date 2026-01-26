@@ -357,6 +357,42 @@
       </section>
 
       <section class="panel">
+        <h2>11) code-meta test (badge + highlighted CLI meta)</h2>
+        <p class="hint">
+          When <code class="k">code-meta</code> is true (default), the language becomes a badge and the remainder
+          of the fence info becomes a highlighted CLI line above the code block.
+        </p>
+
+        <markdown-html>
+          <script type="text/markdown" data-dedent>
+            ## code-meta examples
+
+            ```bash task-2 -C task2Output --dep task-3 --descr "Another demo task"
+            echo "task-2 successful"
+            ```
+
+            ```envrc prepare-env -C ./.envrc --gitignore -X --descr "Generate .envrc file and add it to local .gitignore if it's not already there"
+            export SPRY_DB="sqlite://scf-2025.3.sqlite.db?mode=rwc"
+            export PORT=9227
+            ```
+          </script>
+        </markdown-html>
+
+        <p class="hint" style="margin-top: .75rem">
+          Disable the feature with <code class="k">code-meta="false"</code>.
+        </p>
+
+        <markdown-html code-meta="false">
+          <script type="text/markdown" data-dedent>
+            ```bash task-2 -C task2Output --dep task-3
+            echo "no meta header above this"
+            ```
+          </script>
+        </markdown-html>
+      </section>
+
+
+      <section class="panel">
         <h2>Events</h2>
         <p class="hint">
           Listen to <code class="k">rendered</code> on the element, and
