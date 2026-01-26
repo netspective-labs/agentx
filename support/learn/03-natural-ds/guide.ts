@@ -14,6 +14,7 @@ import {
   apiTable,
   badge,
   bodyText,
+  type BreadcrumbSegment,
   callout,
   codeBlock,
   codeBlockEnhanced,
@@ -294,9 +295,6 @@ const gitHubSubjectOrder: readonly GitHubSubjectId[] = [
   "netspective-labs",
   "programmablemd",
 ];
-
-const gitHubSubjectList = gitHubSubjectOrder.map((id) => gitHubSubjects[id]);
-
 const defaultGitHubSubjectId: GitHubSubjectId = "netspective";
 
 const getGitHubSubject = (id?: string): GitHubSubject =>
@@ -369,10 +367,9 @@ const pageHtml = (request: Request): string => {
       breadcrumbs: (ctx) =>
         new NaturalBreadcrumbsBuilder(ctx)
           .withHome({ label: "Home", href: "/", icon: icons.home })
-          .withRequestTrail({
-            request,
+          .withRequestTrail(request, {
             contextMap: contextNavMap,
-            defaultContextId: "docs",
+            contextId: "docs",
           })
           .appendMany([
             { label: "Documentation", href: "#" },
@@ -1158,30 +1155,32 @@ const renderGitHubBreadcrumbs = (
 ) =>
   new NaturalBreadcrumbsBuilder(ctx)
     .withHome({ label: "Home", href: "/", icon: icons.home })
-    .withRequestTrail({
-      request,
+    .withRequestTrail(request, {
       contextMap: contextNavMap,
-      defaultContextId: "github",
-      subjects: gitHubSubjectList,
-      subject: {
-        label: subject.title,
-        href: `/github/${subject.id}`,
-      },
-      subjectLabel: (sub) => sub.title ?? sub.id,
-      subjectHref: (sub) => sub.href ?? `/github/${sub.id}`,
-      repoResolver: (slug, matchedSubject) => {
-        const target = matchedSubject ?? subject;
-        const found = target.repos.find((entry) => entry.slug === slug);
-        return found
-          ? {
-            label: found.name,
-            href: `/github/${target.id}/${found.slug}`,
+      contextId: "github",
+      trail: ({ segments }) => {
+        const [, subjectId, repoSlug] = segments;
+        const matchedSubject = subjectId
+          ? gitHubSubjects[subjectId as GitHubSubjectId]
+          : subject;
+        const parts: BreadcrumbSegment[] = [];
+        if (matchedSubject) {
+          parts.push({
+            label: matchedSubject.title ?? matchedSubject.id,
+            href: `/github/${matchedSubject.id}`,
+          });
+          const targetRepoSlug = repoSlug ?? repo.slug;
+          const matchedRepo = matchedSubject.repos.find((item) =>
+            item.slug === targetRepoSlug
+          );
+          if (matchedRepo) {
+            parts.push({
+              label: matchedRepo.name,
+              href: `/github/${matchedSubject.id}/${matchedRepo.slug}`,
+            });
           }
-          : undefined;
-      },
-      repo: {
-        label: repo.name,
-        href: `/github/${subject.id}/${repo.slug}`,
+        }
+        return parts;
       },
     })
     .build();

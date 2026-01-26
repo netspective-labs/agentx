@@ -11,7 +11,6 @@ import {
   renderContent,
   type RenderInput,
 } from "../../natural-html/patterns.ts";
-import type { SidebarNavEntry } from "./sidebar.ts";
 import { icons } from "../../natural-html/assets.ts";
 
 const breadcrumbStyles: ComponentStylesheets = [
@@ -101,56 +100,24 @@ export type BreadcrumbSegment = {
 };
 
 export type BreadcrumbTrailOptions = {
-  readonly contextNavId?: string;
+  readonly contextId?: string;
   readonly contextMap?: Record<
     string,
     { readonly label: string; readonly href?: string }
   >;
-  readonly subject?: BreadcrumbSubject;
-  readonly repo?: { readonly label: string; readonly href?: string };
+  readonly contextIdResolver?: (
+    segments: readonly string[],
+  ) => string | undefined;
+  readonly trail?: (
+    context: BreadcrumbTrailContext,
+  ) => readonly BreadcrumbSegment[];
 };
 
-export type BreadcrumbSubjectMetadata = {
-  readonly id: string;
-  readonly href?: string;
-  readonly label?: string;
-  readonly title?: string;
-};
-
-export type BreadcrumbRequestTrailOptions<
-  Subject extends BreadcrumbSubjectMetadata = BreadcrumbSubjectMetadata,
-> = BreadcrumbTrailOptions & {
+export type BreadcrumbTrailContext = {
   readonly request: Request;
-  readonly defaultContextId?: string;
-  readonly contextSegmentIndex?: number;
-  readonly contextIdFromPath?: (
-    segments: readonly string[],
-  ) => string | undefined;
-  readonly subjectSegmentIndex?: number;
-  readonly subjectIdFromPath?: (
-    segments: readonly string[],
-  ) => string | undefined;
-  readonly repoSegmentIndex?: number;
-  readonly repoSlugFromPath?: (
-    segments: readonly string[],
-  ) => string | undefined;
-  readonly subjects?: readonly Subject[];
-  readonly subjectLabel?: (subject: Subject) => string;
-  readonly subjectHref?: (subject: Subject) => string | undefined;
-  readonly repoResolver?: (
-    slug: string,
-    subject?: Subject,
-  ) => BreadcrumbSegment | undefined;
-  readonly navEntries?: readonly SidebarNavEntry[];
-  readonly navEntryResolver?: (
-    segments: readonly string[],
-    entries: readonly SidebarNavEntry[],
-  ) => BreadcrumbSegment | undefined;
-};
-
-export type BreadcrumbSubject = {
-  readonly label: string;
-  readonly href?: string;
+  readonly segments: readonly string[];
+  readonly contextId?: string;
+  readonly contextEntry?: { readonly label: string; readonly href?: string };
 };
 
 export class NaturalBreadcrumbsBuilder {
@@ -178,77 +145,53 @@ export class NaturalBreadcrumbsBuilder {
   }
 
   withAutoTrail(opts: BreadcrumbTrailOptions): this {
-    if (opts.contextNavId && opts.contextMap) {
-      const nav = opts.contextMap[opts.contextNavId];
-      if (nav) {
-        this.append({ label: nav.label, href: nav.href });
-      }
+    const entry = opts.contextId && opts.contextMap
+      ? opts.contextMap[opts.contextId]
+      : undefined;
+    const ctx: BreadcrumbTrailContext = {
+      request: new Request("about:blank"),
+      segments: [],
+      contextId: opts.contextId,
+      contextEntry: entry,
+    };
+
+    if (entry) {
+      this.append({ label: entry.label, href: entry.href });
     }
-    if (opts.subject) {
-      this.append({ label: opts.subject.label, href: opts.subject.href });
-    }
-    if (opts.repo) {
-      this.append({ label: opts.repo.label, href: opts.repo.href });
+    const trail = opts.trail?.(ctx);
+    if (trail && trail.length) {
+      trail.forEach((segment) => this.append(segment));
     }
     return this;
   }
 
-  withRequestTrail<Subject extends BreadcrumbSubjectMetadata>(
-    opts: BreadcrumbRequestTrailOptions<Subject>,
+  withRequestTrail(
+    request: Request,
+    opts: BreadcrumbTrailOptions,
   ): this {
-    const segments = new URL(opts.request.url).pathname
+    const segments = new URL(request.url).pathname
       .split("/")
       .filter((segment) => segment.length > 0);
 
-    const contextId = opts.contextIdFromPath?.(segments) ??
-      segments[opts.contextSegmentIndex ?? 0] ??
-      opts.contextNavId ??
-      opts.defaultContextId;
-
-    if (contextId && opts.contextMap) {
-      const entry = opts.contextMap[contextId];
-      if (entry) {
-        this.append({ label: entry.label, href: entry.href });
-      }
-    }
-
-    const subjectId = opts.subjectIdFromPath?.(segments) ??
-      segments[opts.subjectSegmentIndex ?? 1];
-    const subject = subjectId
-      ? opts.subjects?.find((value) => value.id === subjectId)
+    const contextId = opts.contextIdResolver?.(segments) ?? opts.contextId;
+    const entry = contextId && opts.contextMap
+      ? opts.contextMap[contextId]
       : undefined;
-    if (subject) {
-      this.append({
-        label: opts.subjectLabel?.(subject) ??
-          subject.label ??
-          subject.title ??
-          subject.id,
-        href: opts.subjectHref?.(subject) ?? subject.href,
-      });
-    } else if (opts.subject) {
-      this.append({
-        label: opts.subject.label,
-        href: opts.subject.href,
-      });
+
+    const ctx: BreadcrumbTrailContext = {
+      request,
+      segments,
+      contextId,
+      contextEntry: entry,
+    };
+
+    if (entry) {
+      this.append({ label: entry.label, href: entry.href });
     }
 
-    if (opts.navEntries && opts.navEntryResolver) {
-      const navSegment = opts.navEntryResolver(segments, opts.navEntries);
-      if (navSegment) {
-        this.append(navSegment);
-      }
-    }
-
-    const repoSlug = opts.repoSlugFromPath?.(segments) ??
-      segments[opts.repoSegmentIndex ?? 2];
-    let repoSegment = repoSlug && opts.repoResolver
-      ? opts.repoResolver(repoSlug, subject)
-      : undefined;
-    if (!repoSegment && opts.repo) {
-      repoSegment = opts.repo;
-    }
-    if (repoSegment) {
-      this.append(repoSegment);
+    const trail = opts.trail?.(ctx);
+    if (trail && trail.length) {
+      trail.forEach((segment) => this.append(segment));
     }
 
     return this;
