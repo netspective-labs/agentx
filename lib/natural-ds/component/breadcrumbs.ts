@@ -99,25 +99,20 @@ export type BreadcrumbSegment = {
   readonly icon?: Content<RenderInput, NamingStrategy>;
 };
 
-export type BreadcrumbTrailOptions = {
-  readonly contextId?: string;
-  readonly contextMap?: Record<
-    string,
-    { readonly label: string; readonly href?: string }
-  >;
-  readonly contextIdResolver?: (
-    segments: readonly string[],
-  ) => string | undefined;
-  readonly trail?: (
-    context: BreadcrumbTrailContext,
-  ) => readonly BreadcrumbSegment[];
-};
-
-export type BreadcrumbTrailContext = {
+export type BreadcrumbTrailContext<
+  Meta extends Record<PropertyKey, unknown> = Record<PropertyKey, never>,
+> = Meta & {
   readonly request: Request;
   readonly segments: readonly string[];
-  readonly contextId?: string;
-  readonly contextEntry?: { readonly label: string; readonly href?: string };
+};
+
+export type BreadcrumbTrailOptions<
+  Meta extends Record<PropertyKey, unknown> = Record<PropertyKey, never>,
+> = {
+  readonly metadata?: Meta;
+  readonly trail: (
+    context: BreadcrumbTrailContext<Meta>,
+  ) => readonly BreadcrumbSegment[];
 };
 
 export class NaturalBreadcrumbsBuilder {
@@ -144,56 +139,36 @@ export class NaturalBreadcrumbsBuilder {
     return this;
   }
 
-  withAutoTrail(opts: BreadcrumbTrailOptions): this {
-    const entry = opts.contextId && opts.contextMap
-      ? opts.contextMap[opts.contextId]
-      : undefined;
-    const ctx: BreadcrumbTrailContext = {
+  withAutoTrail<
+    Meta extends Record<PropertyKey, unknown> = Record<PropertyKey, never>,
+  >(opts: BreadcrumbTrailOptions<Meta>): this {
+    const metadata = opts.metadata ?? ({} as Meta);
+    const ctx: BreadcrumbTrailContext<Meta> = {
       request: new Request("about:blank"),
       segments: [],
-      contextId: opts.contextId,
-      contextEntry: entry,
+      ...metadata,
     };
-
-    if (entry) {
-      this.append({ label: entry.label, href: entry.href });
-    }
-    const trail = opts.trail?.(ctx);
-    if (trail && trail.length) {
-      trail.forEach((segment) => this.append(segment));
-    }
+    opts.trail(ctx).forEach((segment) => this.append(segment));
     return this;
   }
 
-  withRequestTrail(
+  withRequestTrail<
+    Meta extends Record<PropertyKey, unknown> = Record<PropertyKey, never>,
+  >(
     request: Request,
-    opts: BreadcrumbTrailOptions,
+    opts: BreadcrumbTrailOptions<Meta>,
   ): this {
     const segments = new URL(request.url).pathname
       .split("/")
       .filter((segment) => segment.length > 0);
 
-    const contextId = opts.contextIdResolver?.(segments) ?? opts.contextId;
-    const entry = contextId && opts.contextMap
-      ? opts.contextMap[contextId]
-      : undefined;
-
-    const ctx: BreadcrumbTrailContext = {
+    const metadata = opts.metadata ?? ({} as Meta);
+    const ctx: BreadcrumbTrailContext<Meta> = {
       request,
       segments,
-      contextId,
-      contextEntry: entry,
+      ...metadata,
     };
-
-    if (entry) {
-      this.append({ label: entry.label, href: entry.href });
-    }
-
-    const trail = opts.trail?.(ctx);
-    if (trail && trail.length) {
-      trail.forEach((segment) => this.append(segment));
-    }
-
+    opts.trail(ctx).forEach((segment) => this.append(segment));
     return this;
   }
 

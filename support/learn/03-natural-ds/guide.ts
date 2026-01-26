@@ -368,8 +368,11 @@ const pageHtml = (request: Request): string => {
         new NaturalBreadcrumbsBuilder(ctx)
           .withHome({ label: "Home", href: "/", icon: icons.home })
           .withRequestTrail(request, {
-            contextMap: contextNavMap,
-            contextId: "docs",
+            trail: ({ segments }) => {
+              const contextId = segments[0] ?? "docs";
+              const entry = contextNavMap[contextId] ?? contextNavMap.docs;
+              return entry ? [{ label: entry.label, href: entry.href }] : [];
+            },
           })
           .appendMany([
             { label: "Documentation", href: "#" },
@@ -1155,34 +1158,43 @@ const renderGitHubBreadcrumbs = (
 ) =>
   new NaturalBreadcrumbsBuilder(ctx)
     .withHome({ label: "Home", href: "/", icon: icons.home })
-    .withRequestTrail(request, {
-      contextMap: contextNavMap,
-      contextId: "github",
-      trail: ({ segments }) => {
-        const [, subjectId, repoSlug] = segments;
-        const matchedSubject = subjectId
-          ? gitHubSubjects[subjectId as GitHubSubjectId]
-          : subject;
-        const parts: BreadcrumbSegment[] = [];
-        if (matchedSubject) {
-          parts.push({
-            label: matchedSubject.title ?? matchedSubject.id,
-            href: `/github/${matchedSubject.id}`,
-          });
-          const targetRepoSlug = repoSlug ?? repo.slug;
-          const matchedRepo = matchedSubject.repos.find((item) =>
-            item.slug === targetRepoSlug
-          );
-          if (matchedRepo) {
-            parts.push({
-              label: matchedRepo.name,
-              href: `/github/${matchedSubject.id}/${matchedRepo.slug}`,
+    .withRequestTrail(
+      request,
+      {
+        metadata: { subject, repo },
+        trail: ({ segments, subject: metaSubject, repo: metaRepo }) => {
+          const contextId = segments[0] ?? "github";
+          const contextEntry = contextNavMap[contextId] ?? contextNavMap.github;
+          const crumbs: BreadcrumbSegment[] = [];
+          if (contextEntry) {
+            crumbs.push({
+              label: contextEntry.label,
+              href: contextEntry.href,
             });
           }
-        }
-        return parts;
+          const subjectId = segments[1] as GitHubSubjectId | undefined;
+          const resolvedSubject = metaSubject ??
+            (subjectId ? gitHubSubjects[subjectId] : undefined);
+          if (resolvedSubject) {
+            crumbs.push({
+              label: resolvedSubject.title ?? resolvedSubject.id,
+              href: `/github/${resolvedSubject.id}`,
+            });
+            const targetRepoSlug = segments[2] ?? metaRepo?.slug;
+            const matchedRepo = resolvedSubject.repos.find((item) =>
+              item.slug === targetRepoSlug
+            );
+            if (matchedRepo) {
+              crumbs.push({
+                label: matchedRepo.name,
+                href: `/github/${resolvedSubject.id}/${matchedRepo.slug}`,
+              });
+            }
+          }
+          return crumbs;
+        },
       },
-    })
+    )
     .build();
 
 const renderGitHubContent = (
