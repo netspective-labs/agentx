@@ -42,23 +42,11 @@ import { customElement } from "../../../lib/natural-html/elements.ts";
 
 type Vars = Record<string, never>;
 
-const schemas = defineSchemas({
-  validateField: (payload: unknown) => decodeCxEnvelope(payload),
-  submitForm: (payload: unknown) => decodeCxEnvelope(payload),
-});
-
-type ServerEvents = {
-  readonly js: string;
-  readonly diag: SseDiagnosticEntry;
-  readonly connection: SseDiagnosticEntry;
-};
-
 const dialogName = "hello-dialog";
 const dialogId = `${dialogName}-dialog`;
 const formId = `${dialogId}-form`;
 const summaryId = `${formId}-summary`;
 const diagId = `${formId}-diagnostics`;
-const sseInspectorTag = customElement("sse-inspector");
 
 const pointingMood = ["optimistic", "curious", "reflective"] as const;
 const palette = ["ember", "emerald", "azure"] as const;
@@ -96,11 +84,6 @@ type State = { submissions: FormSubmission[] };
 
 const appState: State = { submissions: [] };
 
-const cx = createCx<State, Vars, typeof schemas, ServerEvents>(schemas);
-const hub = cx.server.sseHub();
-const sseDiagnostics = createSseDiagnostics(hub, "diag", "connection");
-const cxBuilder = new CxMiddlewareBuilder<ServerEvents>({ hub });
-
 const fieldSchemas: Record<string, z.ZodTypeAny> = {
   name: nameSchema,
   email: emailSchema,
@@ -109,8 +92,6 @@ const fieldSchemas: Record<string, z.ZodTypeAny> = {
   color: colorSchema,
   subscribe: subscribeSchema,
 };
-
-const changeAttr = () => cx.html.change("validateField");
 
 const validationWrapper = (
   fieldHtml: RawHtml,
@@ -146,7 +127,190 @@ const validationWrapper = (
   );
 };
 
-const dialogBuilder = createDialog(dialogName, formSchema);
+const feedbackElementId = (field: string) => `${formId}-${field}-feedback`;
+const inputElementId = (field: string) => `${formId}-${field}`;
+
+const setValidationFeedbackJs = (
+  field: string,
+  message: string,
+  valid: boolean,
+): string => `
+  {
+    const fb = document.getElementById(${
+  JSON.stringify(feedbackElementId(field))
+});
+    if (fb) {
+      fb.textContent = ${JSON.stringify(message)};
+      fb.dataset.valid = ${JSON.stringify(valid ? "true" : "false")};
+    }
+    const inputEl = document.getElementById(${
+  JSON.stringify(inputElementId(field))
+});
+    if (inputEl && "classList" in inputEl) {
+      if (${valid}) {
+        inputEl.classList.remove("natural-dialog__field-input--invalid");
+        inputEl.removeAttribute("aria-invalid");
+      } else {
+        inputEl.classList.add("natural-dialog__field-input--invalid");
+        inputEl.setAttribute("aria-invalid", "true");
+      }
+    }
+  }
+`;
+
+const setSubmissionMessageJs = (message: string, success: boolean): string => `
+  {
+    const target = document.getElementById(${JSON.stringify(summaryId)});
+    if (target) {
+      target.textContent = ${JSON.stringify(message)};
+      target.dataset.status = ${JSON.stringify(success ? "success" : "error")};
+    }
+  }
+`;
+
+const normalizeFieldValue = (
+  fieldName: string,
+  input?: Partial<{ value?: string; checked?: boolean }>,
+): unknown => {
+  switch (fieldName) {
+    case "age": {
+      const raw = input?.value ?? "";
+      if (!raw.trim()) return raw;
+      const numeric = Number(raw);
+      return Number.isFinite(numeric) ? numeric : raw;
+    }
+    case "subscribe":
+      return !!input?.checked;
+    default:
+      return input?.value ?? "";
+  }
+};
+
+const interactivityAide = <
+  State extends { submissions: FormSubmission[] },
+  Vars extends Record<string, unknown>,
+>(_state: State) => {
+  const schemas = defineSchemas({
+    validateField: decodeCxEnvelope,
+    submitForm: decodeCxEnvelope,
+  });
+
+  type ServerEvents = {
+    readonly js: string;
+    readonly diag: SseDiagnosticEntry;
+    readonly connection: SseDiagnosticEntry;
+  };
+
+  const cx = createCx<State, Vars, typeof schemas, ServerEvents>(schemas);
+  const hub = cx.server.sseHub();
+  const sseDiagnostics = createSseDiagnostics(hub, "diag", "connection");
+  const builder = new CxMiddlewareBuilder<ServerEvents>({ hub });
+  const sseInspectorTag = customElement("sse-inspector");
+
+  const sendDiagEvent = (
+    sessionId: string | undefined,
+    entry: Partial<SseDiagnosticEntry>,
+  ) => {
+    if (!sessionId) return;
+    sseDiagnostics.diag(sessionId, entry);
+  };
+
+  const handlers: CxActionHandlers<
+    State,
+    Vars,
+    typeof schemas,
+    ServerEvents,
+    "action"
+  > = {
+    validateField: ({ cx: env, emit, sessionId }) => {
+      const fieldName = env.element.name ?? "";
+      if (!fieldName) return { ok: true };
+      const schemaForField = fieldSchemas[fieldName];
+      if (!schemaForField) return { ok: true };
+      const normalized = normalizeFieldValue(fieldName, env.input);
+      const parsed = schemaForField.safeParse(normalized);
+      const message = parsed.success
+        ? "Looks good"
+        : parsed.error.issues[0]?.message ?? "Please fix this field";
+      emit.js(setValidationFeedbackJs(fieldName, message, parsed.success));
+      sendDiagEvent(sessionId, {
+        message: `${fieldName} validation -> ${
+          parsed.success ? "ok" : "fail"
+        }: ${message}`,
+        level: parsed.success ? "info" : "warn",
+        payload: { field: fieldName, valid: parsed.success },
+      });
+      return { ok: true };
+    },
+    submitForm: ({ cx: env, emit, state, sessionId }) => {
+      const parsed = formSchema.safeParse(env.form ?? {});
+      if (!parsed.success) {
+        const issues = parsed.error.issues
+          .map((issue) =>
+            `${String(issue.path[0] ?? "field")}: ${issue.message}`
+          )
+          .join("; ");
+        sendDiagEvent(sessionId, {
+          message: `submit validation failed: ${issues}`,
+          level: "error",
+          payload: { issues },
+        });
+        for (const issue of parsed.error.issues) {
+          if (typeof issue.path[0] === "string") {
+            emit.js(
+              setValidationFeedbackJs(issue.path[0], issue.message, false),
+            );
+          }
+        }
+        emit.js(setSubmissionMessageJs(`Validation errors: ${issues}`, false));
+        return { ok: false, status: 400, message: "validation" };
+      }
+      state.submissions.push(parsed.data);
+      const successMessage =
+        `Submitted ${parsed.data.name}. Total submissions: ${state.submissions.length}.`;
+      emit.js(setSubmissionMessageJs(successMessage, true));
+      sendDiagEvent(sessionId, {
+        message: successMessage,
+        level: "info",
+        payload: { submissions: state.submissions.length },
+      });
+      return { ok: true };
+    },
+  };
+
+  const middleware = builder.middleware<State, Vars, typeof schemas, "action">({
+    uaCacheControl: "no-store",
+    onConnect: async ({ session, sessionId }) => {
+      await session.sendWhenReady(
+        "js",
+        setSubmissionMessageJs(
+          "Connected. Form values stream validation as you move between fields.",
+          true,
+        ),
+      );
+      sseDiagnostics.connection(sessionId, {
+        message: "SSE diagnostics channel established",
+        level: "info",
+      });
+    },
+    interaction: {
+      cx,
+      handlers,
+    },
+  });
+
+  return { cx, builder, middleware, sseDiagnostics, sseInspectorTag };
+};
+
+const {
+  cx,
+  middleware: interactivityMiddleware,
+  sseDiagnostics,
+  sseInspectorTag,
+} = interactivityAide<State, Vars>(appState);
+
+const changeAttr = () => cx.html.change("validateField");
+
 const fieldOrder = [
   "name",
   "email",
@@ -155,6 +319,8 @@ const fieldOrder = [
   "color",
   "subscribe",
 ] as const;
+
+const dialogBuilder = createDialog(dialogName, formSchema);
 
 dialogBuilder.field("name", {
   label: "Full name",
@@ -250,77 +416,6 @@ const renderDefaults: DialogRenderOptions<typeof formSchema> = {
   fieldNamePrefix: "",
   data: initialData,
   formAttrs: cx.html.submit("submitForm"),
-};
-
-const feedbackElementId = (field: string) => `${formId}-${field}-feedback`;
-const inputElementId = (field: string) => `${formId}-${field}`;
-
-const setValidationFeedbackJs = (
-  field: string,
-  message: string,
-  valid: boolean,
-): string => `
-  {
-    const fb = document.getElementById(${
-  JSON.stringify(
-    feedbackElementId(field),
-  )
-});
-    if (fb) {
-      fb.textContent = ${JSON.stringify(message)};
-      fb.dataset.valid = ${JSON.stringify(valid ? "true" : "false")};
-    }
-    const inputEl = document.getElementById(${
-  JSON.stringify(
-    inputElementId(field),
-  )
-});
-    if (inputEl && "classList" in inputEl) {
-      if (${valid}) {
-        inputEl.classList.remove("natural-dialog__field-input--invalid");
-        inputEl.removeAttribute("aria-invalid");
-      } else {
-        inputEl.classList.add("natural-dialog__field-input--invalid");
-        inputEl.setAttribute("aria-invalid", "true");
-      }
-    }
-  }
-`;
-
-const setSubmissionMessageJs = (message: string, success: boolean): string => `
-  {
-    const target = document.getElementById(${JSON.stringify(summaryId)});
-    if (target) {
-      target.textContent = ${JSON.stringify(message)};
-      target.dataset.status = ${JSON.stringify(success ? "success" : "error")};
-    }
-  }
-`;
-
-const sendDiagEvent = (
-  sessionId: string | undefined,
-  entry: Partial<SseDiagnosticEntry>,
-) => {
-  if (!sessionId) return;
-  sseDiagnostics.diag(sessionId, entry);
-};
-
-const normalizeFieldValue = (
-  fieldName: string,
-  input?: Partial<{ value?: string; checked?: boolean }>,
-): unknown => {
-  switch (fieldName) {
-    case "age": {
-      const raw = input?.value ?? "";
-      if (!raw.trim()) return raw;
-      const numeric = Number(raw);
-      return Number.isFinite(numeric) ? numeric : raw;
-    }
-    case "subscribe":
-      return !!input?.checked;
-    default:
-      return input?.value ?? "";
-  }
 };
 
 const dialogMarkup = dialog.render(renderDefaults);
@@ -443,92 +538,10 @@ const pageHtml = (): string => {
   );
 };
 
-const handlers: CxActionHandlers<
-  State,
-  Vars,
-  typeof schemas,
-  ServerEvents,
-  "action"
-> = {
-  validateField: ({ cx: env, emit, sessionId }) => {
-    const fieldName = env.element.name ?? "";
-    if (!fieldName) return { ok: true };
-    const schemaForField = fieldSchemas[fieldName];
-    if (!schemaForField) return { ok: true };
-    const normalized = normalizeFieldValue(fieldName, env.input);
-    const parsed = schemaForField.safeParse(normalized);
-    const message = parsed.success
-      ? "Looks good"
-      : parsed.error.issues[0]?.message ?? "Please fix this field";
-    emit.js(setValidationFeedbackJs(fieldName, message, parsed.success));
-    sendDiagEvent(sessionId, {
-      message: `${fieldName} validation -> ${
-        parsed.success ? "ok" : "fail"
-      }: ${message}`,
-      level: parsed.success ? "info" : "warn",
-      payload: { field: fieldName, valid: parsed.success },
-    });
-    return { ok: true };
-  },
-  submitForm: ({ cx: env, emit, state, sessionId }) => {
-    const parsed = formSchema.safeParse(env.form ?? {});
-    if (!parsed.success) {
-      const issues = parsed.error.issues
-        .map((issue) => `${String(issue.path[0] ?? "field")}: ${issue.message}`)
-        .join("; ");
-      sendDiagEvent(sessionId, {
-        message: `submit validation failed: ${issues}`,
-        level: "error",
-        payload: { issues },
-      });
-      for (const issue of parsed.error.issues) {
-        if (typeof issue.path[0] === "string") {
-          emit.js(setValidationFeedbackJs(issue.path[0], issue.message, false));
-        }
-      }
-      emit.js(setSubmissionMessageJs(`Validation errors: ${issues}`, false));
-      return { ok: false, status: 400, message: "validation" };
-    }
-    state.submissions.push(parsed.data);
-    const successMessage =
-      `Submitted ${parsed.data.name}. Total submissions: ${state.submissions.length}.`;
-    emit.js(setSubmissionMessageJs(successMessage, true));
-    sendDiagEvent(sessionId, {
-      message: successMessage,
-      level: "info",
-      payload: { submissions: state.submissions.length },
-    });
-    return { ok: true };
-  },
-};
+const app = Application.sharedState<State, Vars>(appState);
 
-const app = Application.sharedState(appState);
-
-// Serve the inspector module via middleware (instead of app.get(...)).
 app.use(sseDiagnostics.middleware<State, Vars>());
-
-app.use(
-  cxBuilder.middleware<State, Vars, typeof schemas, "action">({
-    uaCacheControl: "no-store",
-    onConnect: async ({ session, sessionId }) => {
-      await session.sendWhenReady(
-        "js",
-        setSubmissionMessageJs(
-          "Connected. Form values stream validation as you move between fields.",
-          true,
-        ),
-      );
-      sseDiagnostics.connection(sessionId, {
-        message: "SSE diagnostics channel established",
-        level: "info",
-      });
-    },
-    interaction: {
-      cx,
-      handlers,
-    },
-  }),
-);
+app.use(interactivityMiddleware);
 
 app.get("/", () => htmlResponse(pageHtml()));
 
