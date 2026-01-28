@@ -448,10 +448,6 @@ const githubProxyManifest: ProxyManifestRoute<State, Vars>[] = [
         "content-security-policy",
         "content-security-policy-report-only",
       ],
-      set: {
-        "content-security-policy":
-          "frame-ancestors http://127.0.0.1:7599 http://127.0.0.1:7600 http://localhost:7599 http://localhost:7600;",
-      },
     },
     ...(githubProxyRequestHeaders
       ? { requestHeaders: githubProxyRequestHeaders }
