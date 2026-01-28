@@ -24,6 +24,7 @@ import {
   pageHeader,
   sidebarHeader,
 } from "../../../lib/natural-ds/mod.ts";
+import { icons } from "../../../lib/natural-html/assets.ts";
 import * as H from "../../../lib/natural-html/elements.ts";
 import { combineHast, headSlots } from "../../../lib/natural-html/patterns.ts";
 
@@ -32,14 +33,6 @@ type Vars = Record<string, never>;
 
 const app = Application.sharedState<State, Vars>({});
 const ds = naturalDesignSystem();
-
-const svg = (markup: string) => H.trustedRaw(markup);
-
-const icons = {
-  toggle: svg(
-    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line></svg>',
-  ),
-};
 
 const pageHtml = (): string => {
   const page = ds.page("NaturalDoc", {}, {

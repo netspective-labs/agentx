@@ -35,6 +35,7 @@ import {
   tocLink,
   tocList,
 } from "../../../lib/natural-ds/mod.ts";
+import { icons } from "../../../lib/natural-html/assets.ts";
 import * as H from "../../../lib/natural-html/elements.ts";
 import { combineHast, headSlots } from "../../../lib/natural-html/patterns.ts";
 
@@ -43,17 +44,6 @@ type Vars = Record<string, never>;
 
 const app = Application.sharedState<State, Vars>({});
 const ds = naturalDesignSystem();
-
-const svg = (markup: string) => H.trustedRaw(markup);
-
-const icons = {
-  search: svg(
-    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>',
-  ),
-  toggle: svg(
-    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line></svg>',
-  ),
-};
 
 const exampleMarkdown = `# Hello Markdown
 
