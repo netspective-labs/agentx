@@ -142,7 +142,7 @@ const docsNavEntries: SidebarNavEntry[] = [
 const contextNavDefinitions = [
   { id: "docs", label: "Docs", href: "/", icon: icons.docs },
   { id: "github", label: "GitHub", href: "/github", icon: icons.github },
-  { id: "blog", label: "Blog", icon: icons.globe },
+  { id: "pitch", label: "Pitch", href: "/pitch", icon: icons.globe },
   { id: "discord", label: "Discord", icon: icons.chat },
 ];
 
@@ -1114,6 +1114,19 @@ const pageHtml = (request: Request): string => {
             src: "http://via.placeholder.com/960x320?text=Natural+DS",
             caption: "Reference preview image",
           }),
+          callout(ctx, {
+            title: "See the NaturalPitch layout",
+            icon: icons.info,
+            variant: "info",
+            content: h.span(
+              "Launch the ",
+              h.a({
+                href: "/pitch",
+                style: "color:#f97316; text-decoration:underline;",
+              }, "/pitch"),
+              " sales layout demo to see this concept in action.",
+            ),
+          }),
           footerNav(ctx, {
             previous: {
               label: "Previous",
@@ -1189,6 +1202,250 @@ const pageHtml = (request: Request): string => {
     },
     headSlots: headSlots({
       title: "Natural DS Reference",
+      meta: [
+        h.meta({ charset: "utf-8" }),
+        h.meta({
+          name: "viewport",
+          content: "width=device-width, initial-scale=1",
+        }),
+      ],
+    }),
+    styleAttributeEmitStrategy: "head",
+  });
+
+  return h.render(page);
+};
+
+const pitchHeroButton = (
+  ctx: DsRenderCtx,
+  label: string,
+  href: string,
+  primary: boolean,
+) =>
+  h.a({
+    href,
+    style: ctx.css({
+      borderRadius: "999px",
+      padding: "12px 28px",
+      fontSize: "0.95rem",
+      fontWeight: 600,
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      letterSpacing: "0.01em",
+      textDecoration: "none",
+      transition: "transform 0.15s ease, box-shadow 0.15s ease",
+      backgroundColor: primary ? "#1c1b1a" : "transparent",
+      color: primary ? "#fefcf7" : "#1b1a17",
+      border: primary ? "none" : "1px solid rgba(27, 26, 22, 0.35)",
+      boxShadow: primary
+        ? "0 12px 30px rgba(27, 26, 22, 0.35)"
+        : "0 0 0 rgba(0, 0, 0, 0)",
+    }),
+  }, label);
+
+const pitchFeatureCards = (ctx: DsRenderCtx) =>
+  featureGrid(ctx, {
+    cards: [
+      featureCard(ctx, {
+        icon: "🎯",
+        title: "Purpose-built hero",
+        description: "Highlight value props and actions above the fold.",
+      }),
+      featureCard(ctx, {
+        icon: "💡",
+        title: "Try-it snippet",
+        description: "Embed a runnable callout that invites experimentation.",
+      }),
+      featureCard(ctx, {
+        icon: "🧱",
+        title: "Composable highlights",
+        description:
+          "Stack cards, testimonials, and docs highlights without layout plumbing.",
+      }),
+      featureCard(ctx, {
+        icon: "⚙️",
+        title: "Docs for engineers",
+        description:
+          "Support copy, code, and CLI hooks with consistent spacing.",
+      }),
+    ],
+  });
+
+const pitchDocsHighlights = (ctx: DsRenderCtx) =>
+  h.div(
+    {
+      style: ctx.css({
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+        gap: "18px",
+      }),
+    },
+    callout(ctx, {
+      title: "Framework Agnostic",
+      icon: icons.info,
+      variant: "info",
+      content:
+        "Use NaturalPitch as a marketing shell anywhere your docs need a crossover between sales and developer onboarding.",
+    }),
+    callout(ctx, {
+      title: "Minimal aesthetics",
+      icon: icons.tip,
+      variant: "tip",
+      content:
+        "Soft gradients, rounded cards, and consistent spacing keep the focus on your message.",
+    }),
+    callout(ctx, {
+      title: "Search-first CTA",
+      icon: icons.info,
+      variant: "info",
+      content:
+        "Layer calls to action at the top and bottom so visitors always know how to engage.",
+    }),
+  );
+
+const pitchCrystalVisual = (ctx: DsRenderCtx) =>
+  h.div(
+    {
+      style: ctx.css({
+        borderRadius: "26px",
+        padding: "18px",
+        background:
+          "linear-gradient(135deg, rgba(255,255,255,0.8), rgba(232,222,188,0.95))",
+        border: "1px solid rgba(255,255,255,0.8)",
+        boxShadow: "0 20px 50px rgba(28, 27, 26, 0.25)",
+      }),
+    },
+    h.div(
+      {
+        style: ctx.css({
+          borderRadius: "20px",
+          background:
+            "radial-gradient(circle at 30% -20%, rgba(255,255,255,0.9), rgba(255,255,255,0))," +
+            "linear-gradient(180deg, #111111, #080707)",
+          minHeight: "220px",
+          padding: "24px",
+          color: "#f5f5f2",
+          fontFamily: "SF Mono, Monaco, 'Courier New', monospace",
+          display: "flex",
+          flexDirection: "column",
+          gap: "12px",
+        }),
+      },
+      h.span(
+        {
+          style: ctx.css({
+            letterSpacing: "0.08em",
+            textTransform: "uppercase",
+            fontSize: "0.75rem",
+            color: "#f97316",
+          }),
+        },
+        "Quick start",
+      ),
+      h.h3(
+        {
+          style: ctx.css({
+            fontSize: "1.9rem",
+            margin: 0,
+            lineHeight: 1.2,
+          }),
+        },
+        "docs + pitch",
+      ),
+      h.codeTag("npx natural launch demo"),
+      h.div(
+        {
+          style: ctx.css({
+            display: "flex",
+            justifyContent: "space-between",
+            marginTop: "auto",
+          }),
+        },
+        h.span("Hero preview"),
+        h.span("Live ✓"),
+      ),
+    ),
+  );
+
+const pitchTestimonials = (ctx: DsRenderCtx) =>
+  h.div(
+    {
+      style: ctx.css({
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+        gap: "18px",
+      }),
+    },
+    callout(ctx, {
+      title: "Anthony, DevOps",
+      content:
+        "“The NaturalPitch layout kept our new product launch concise without sacrificing technical depth.”",
+    }),
+    callout(ctx, {
+      title: "Adia, Head of Docs",
+      variant: "info",
+      content:
+        "“Soft gradients and segmented sections make it easy for stakeholders to walk through the proposal.”",
+    }),
+  );
+
+const pitchTryItSnippet = (ctx: DsRenderCtx) =>
+  codeBlock(ctx, {
+    content: h.codeTag("npx natural docs-pitch --template fumadocs"),
+  });
+
+const pitchCtaButtons = (ctx: DsRenderCtx) =>
+  h.div(
+    {
+      style: ctx.css({
+        display: "flex",
+        gap: "16px",
+        flexWrap: "wrap",
+        justifyContent: "center",
+      }),
+    },
+    pitchHeroButton(ctx, "Book a demo", "#pitch-demo", false),
+    pitchHeroButton(ctx, "View the docs", "/#layout", true),
+  );
+
+const pitchPageHtml = (_request: Request): string => {
+  const page = ds.page("NaturalPitch", {}, {
+    slots: {
+      heroBadge: () => h.span("Sales pitch"),
+      heroTitle: () => h.text("Build excellent documentation, your style."),
+      heroSubtitle: () =>
+        h.text(
+          "NaturalPitch combines marketing flair with developer-friendly structure so your docs look intentional from the first glance.",
+        ),
+      heroPrimaryAction: (ctx) =>
+        pitchHeroButton(ctx, "Get Started", "/#layout", true),
+      heroSecondaryAction: (ctx) =>
+        pitchHeroButton(
+          ctx,
+          "Open CodeSandbox",
+          "https://codesandbox.io",
+          false,
+        ),
+      heroVisual: pitchCrystalVisual,
+      featureIntro: (ctx) =>
+        bodyText(ctx, {
+          content:
+            "Nest this layout when you need a hero that sells, cards that explain value, and CTA bars that convert.",
+        }),
+      tryItSnippet: pitchTryItSnippet,
+      featureCards: pitchFeatureCards,
+      testimonialCards: pitchTestimonials,
+      docsHighlights: pitchDocsHighlights,
+      ctaTitle: () => h.text("Start building docs people actually read."),
+      ctaActions: pitchCtaButtons,
+      footerNote: () =>
+        h.text(
+          "Trusted by documentation teams, design systems squads, and open source communities worldwide.",
+        ),
+    },
+    headSlots: headSlots({
+      title: "NaturalPitch Layout Sample",
       meta: [
         h.meta({ charset: "utf-8" }),
         h.meta({
@@ -1383,6 +1640,7 @@ app.use(async (c, next) => {
 });
 
 app.get("/", (c) => htmlResponse(pageHtml(c.req)));
+app.get("/pitch", (c) => htmlResponse(pitchPageHtml(c.req)));
 
 app.get("/github", (c) => respondGitHubPage(c.req));
 app.get(

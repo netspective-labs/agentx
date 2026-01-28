@@ -13,7 +13,7 @@ import {
   headSlots,
   RenderInput,
 } from "../natural-html/patterns.ts";
-import { naturalLayout } from "./layouts.ts";
+import { naturalLayout, naturalPitchLayout } from "./layouts.ts";
 import {
   breadcrumbRowRegion,
   contextHeaderRegion,
@@ -41,6 +41,7 @@ export function naturalDesignSystem(dsName = "natural-ds") {
     .region(mainContentRegion)
     .region(rightSidebarRegion)
     .layout(naturalLayout)
+    .layout(naturalPitchLayout)
     .build();
 
   const defaultHead = headSlots({

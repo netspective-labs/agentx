@@ -32,6 +32,7 @@ const contentStyles: ComponentStylesheets = [
       fontSize: "16px",
       color: "#525252",
       lineHeight: 1.7,
+      marginTop: "-20px",
       marginBottom: "20px",
     },
     "page-actions": {
