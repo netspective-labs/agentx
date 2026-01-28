@@ -5,6 +5,7 @@ import {
   NamingStrategy,
 } from "../../natural-html/design-system.ts";
 import * as h from "../../natural-html/elements.ts";
+import { comment } from "../../natural-html/elements.ts";
 import {
   combineHast,
   type Content,
@@ -30,6 +31,12 @@ const contextHeaderStyles: ComponentStylesheets = [
       fontSize: "15px",
     },
     "context-brand-icon": {
+      height: "28px",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    "context-brand-icon-text": {
       width: "28px",
       height: "28px",
       background: "linear-gradient(135deg, #f97316 0%, #ea580c 100%)",
@@ -148,7 +155,11 @@ export const contextBrand = defineComponent<
       h.text(props.iconText ?? "DS");
     return h.a(
       { href: props.href ?? "#", class: ctx.cls("context-brand") },
-      h.span({ class: ctx.cls("context-brand-icon") }, icon),
+      h.span({
+        class: ctx.cls(
+          props.icon ? "context-brand-icon" : "context-brand-icon-text",
+        ),
+      }, icon),
       h.span(props.label),
     );
   },
@@ -310,7 +321,6 @@ export class NaturalContextBarBuilder {
 
   build(): h.RawHtml {
     if (!this.#brand) throw new Error("Context bar requires a brand.");
-    if (!this.#user) throw new Error("Context bar requires a user.");
 
     const nav = this.#navEntries.map((entry) =>
       contextNavLink(this.#ctx, {
@@ -332,7 +342,9 @@ export class NaturalContextBarBuilder {
       brand: contextBrand(this.#ctx, this.#brand),
       nav,
       actions,
-      user: contextUser(this.#ctx, this.#user),
+      user: this.#user
+        ? contextUser(this.#ctx, this.#user)
+        : h.div(comment("No user supplied")),
     });
   }
 }
