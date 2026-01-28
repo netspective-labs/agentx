@@ -1,4 +1,81 @@
-// lib/continuux/safe-http.ts
+/**
+ * lib/continuux/safe-http.ts
+ *
+ * A small, opinionated, type-safe companion to `lib/continuux/http.ts`.
+ *
+ * This module does not replace the core HTTP system.
+ * It wraps an existing `Application` instance and derives all behavior
+ * directly from the routes registered on that application.
+ *
+ * Architectural intent:
+ * - Eliminate stringly-typed href construction
+ * - Provide forward (href) and reverse (parse) routing from the same source
+ * - Detect drift between typed routes and the underlying Application
+ * - Remain explicit, Fetch-native, and framework-light
+ *
+ * Key invariants:
+ *
+ * 1. Route IDs ARE the literal path templates.
+ *    Example: "/users/:id" is both the identifier and the definition.
+ *
+ * 2. The underlying `Application` is the source of truth.
+ *    safeHttp does not maintain a parallel router or registry.
+ *
+ * 3. Forward routing (href) and reverse routing (parse)
+ *    are derived from the same typed definitions.
+ *
+ * 4. `SafeHref` is a branded string:
+ *    - It is assignable to `string`
+ *    - It cannot be constructed from an arbitrary string
+ *
+ * 5. Optional `Elaboration` is user-defined and inert.
+ *    This module never interprets, validates, or acts on elaboration data.
+ *
+ * What this module deliberately avoids:
+ * - No named routes
+ * - No metadata-driven routing
+ * - No implicit globals or registries
+ * - No runtime behavior based on elaboration
+ *
+ * Minimal example:
+ *
+ * ```ts
+ * const app = Application.sharedState({});
+ *
+ * type Elab = { summary: string };
+ *
+ * const r = safeHttp<{}, {}, Elab>(app)
+ *   .get("/hello/:name", { summary: "Hello page" }, (c) =>
+ *     c.text(`hi ${c.params.name}`)
+ *   );
+ *
+ * const href = r.href("/hello/:name", { name: "world" });
+ * // SafeHref, but usable as a normal string
+ *
+ * const match = r.parse("/hello/world");
+ * // → { id: "/hello/:name", params: { name: "world" } }
+ * ```
+ *
+ * Important usage note:
+ *
+ * `safeHttp()` MUST wrap the same `Application` instance that is used
+ * to serve requests. Drift detection relies on this invariant.
+ *
+ * Documentation philosophy:
+ *
+ * This module intentionally keeps inline documentation minimal.
+ * The test suite (`safe-http_test.ts`) is the authoritative documentation.
+ *
+ * The tests demonstrate:
+ * - Correct generic instantiation (State / Vars / Elaboration)
+ * - Forward and reverse routing
+ * - Query and hash handling
+ * - Drift detection
+ * - End-to-end fetch behavior
+ *
+ * If something is unclear:
+ * → read the tests first.
+ */
 import type {
   Application,
   EmptyRecord,

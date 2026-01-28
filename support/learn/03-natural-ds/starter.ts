@@ -10,6 +10,10 @@
  */
 import { Application, htmlResponse } from "../../../lib/continuux/http.ts";
 import {
+  type SafeApplication,
+  safeHttp,
+} from "../../../lib/continuux/safe-http.ts";
+import {
   badge,
   bodyText,
   type BreadcrumbSegment,
@@ -50,26 +54,86 @@ const ds = naturalDesignSystem();
 
 type ContextPageId = "components" | "patterns";
 
+type RouteElaboration = {
+  readonly description: string;
+  readonly contextId: ContextPageId;
+};
+
+// These literal templates are the single source of truth for every
+// nav link that SafeHttp manages. Extend this list whenever you add
+// a new route and keep the values in sync with SafeHttp registration.
+const routeIds = {
+  root: "/",
+  components: "/components",
+  componentsSubject: "/components/:subject",
+  patterns: "/patterns",
+  patternsSubject: "/patterns/:subject",
+} as const;
+
+type PageRouteId = (typeof routeIds)[keyof typeof routeIds];
+
+type AppRoutes = SafeApplication<
+  State,
+  Vars,
+  PageRouteId,
+  Record<PageRouteId, RouteElaboration>
+>;
+
+const subjectRouteByContext = {
+  components: routeIds.componentsSubject,
+  patterns: routeIds.patternsSubject,
+} satisfies Record<ContextPageId, PageRouteId>;
+
 // Define the top-level context navigation entries used by the context bar and breadcrumbs;
 // keeping this centralized keeps labels and hrefs consistent across builders.
-const contextNavDefinitions = [
+type ContextNavDefinition = {
+  readonly id: ContextPageId;
+  readonly label: string;
+  readonly routeId: PageRouteId;
+  readonly icon: H.RawHtml;
+};
+
+const contextNavDefinitions: readonly ContextNavDefinition[] = [
   {
     id: "components",
     label: "Components",
-    href: "/components",
+    routeId: routeIds.components,
     icon: icons.docs,
   },
-  { id: "patterns", label: "Patterns", href: "/patterns", icon: icons.grid },
+  {
+    id: "patterns",
+    label: "Patterns",
+    routeId: routeIds.patterns,
+    icon: icons.grid,
+  },
 ];
 
 // Keep a strongly typed lookup for context labels so breadcrumbs stay in sync.
 // Use const assertions where possible to narrow literal types that feed into builders.
 const contextNavMap = contextNavDefinitions.reduce<
-  Record<string, { readonly label: string; readonly href?: string }>
+  Record<
+    ContextPageId,
+    {
+      readonly label: string;
+      readonly icon: H.RawHtml;
+      readonly routeId: PageRouteId;
+    }
+  >
 >((map, entry) => {
-  map[entry.id] = { label: entry.label, href: entry.href };
+  map[entry.id] = {
+    label: entry.label,
+    icon: entry.icon,
+    routeId: entry.routeId,
+  };
   return map;
-}, {} as Record<string, { readonly label: string; readonly href?: string }>);
+}, {} as Record<
+  ContextPageId,
+  {
+    readonly label: string;
+    readonly icon: H.RawHtml;
+    readonly routeId: PageRouteId;
+  }
+>);
 
 type SubjectDefinition = SidebarSubject & {
   readonly navEntries: readonly SidebarNavEntry[];
@@ -148,6 +212,7 @@ const defaultContext: ContextPageId = "components";
 const buildContextHeader = (
   ctx: RenderCtx<RenderInput, NamingStrategy>,
   active: ContextPageId,
+  routes: AppRoutes,
 ) =>
   new NaturalContextBarBuilder(ctx)
     .withBrand({ label: "Natural DS Lab", iconText: "ND" })
@@ -156,7 +221,7 @@ const buildContextHeader = (
       contextNavDefinitions.map((entry) => ({
         kind: "link" as const,
         label: entry.label,
-        href: entry.href,
+        href: routes.href(entry.routeId),
         icon: entry.icon,
         active: entry.id === active,
       })),
@@ -180,6 +245,7 @@ const renderSidebar = (
   ctx: RenderCtx<RenderInput, NamingStrategy>,
   contextId: ContextPageId,
   subjectId: string,
+  routes: AppRoutes,
 ) => {
   const subjects = subjectsByContext[contextId];
   const active = subjects.find((subject) => subject.id === subjectId) ??
@@ -198,7 +264,9 @@ const renderSidebar = (
       triggerId: "subject-trigger",
       popupId: "subject-popup",
       // Sidebar builder stays agnostic of routing; just return an href string.
-      onSelect: (subject) => `/${contextId}/${subject.id}`,
+      // Use SafeHttp to keep onSelect links in sync with the registered routes.
+      onSelect: (subject) =>
+        routes.href(subjectRouteByContext[contextId], { subject: subject.id }),
     })
     .withNavEntries([...active.navEntries])
     .build();
@@ -211,10 +279,15 @@ const renderBreadcrumbs = (
   contextId: ContextPageId,
   subjectId: string,
   request: Request,
+  routes: AppRoutes,
 ) =>
   // Breadcrumb builder derives segments from the request path so we stay consistent with routing metadata.
   new NaturalBreadcrumbsBuilder(ctx)
-    .withHome({ label: "Home", href: "/", icon: icons.home })
+    .withHome({
+      label: "Home",
+      href: routes.href(routeIds.root),
+      icon: icons.home,
+    })
     .withRequestTrail(request, {
       metadata: { contextId, subjectId },
       trail: (
@@ -223,14 +296,18 @@ const renderBreadcrumbs = (
         const crumbs: BreadcrumbSegment[] = [];
         const ctx = contextNavMap[resolvedContext ?? contextId] ??
           contextNavMap[defaultContext];
-        if (ctx) crumbs.push({ label: ctx.label, href: ctx.href });
+        if (ctx) {
+          crumbs.push({ label: ctx.label, href: routes.href(ctx.routeId) });
+        }
         const subject = subjectsByContext[contextId].find((subject) =>
           subject.id === resolvedSubject
         ) ??
           subjectsByContext[contextId][0];
         crumbs.push({
           label: subject.title,
-          href: `/${contextId}/${subject.id}`,
+          href: routes.href(subjectRouteByContext[contextId], {
+            subject: subject.id,
+          }),
         });
         const sectionIdx = contextId === "components" ? 2 : 1;
         const sectionId = segments[sectionIdx];
@@ -415,6 +492,7 @@ const pageHtml = (
   contextId: ContextPageId,
   subjectId: string,
   request: Request,
+  routes: AppRoutes,
 ): string => {
   const subjectList = subjectsByContext[contextId];
   const subject = subjectList.find((item) => item.id === subjectId) ??
@@ -422,10 +500,10 @@ const pageHtml = (
 
   const page = ds.page("NaturalDoc", {}, {
     slots: {
-      contextHeader: (ctx) => buildContextHeader(ctx, contextId),
-      sidebar: (ctx) => renderSidebar(ctx, contextId, subject.id),
+      contextHeader: (ctx) => buildContextHeader(ctx, contextId, routes),
+      sidebar: (ctx) => renderSidebar(ctx, contextId, subject.id, routes),
       breadcrumbs: (ctx) =>
-        renderBreadcrumbs(ctx, contextId, subject.id, request),
+        renderBreadcrumbs(ctx, contextId, subject.id, request, routes),
       content: (ctx) =>
         contextId === "components"
           ? renderComponentsContent(ctx, subject)
@@ -457,6 +535,11 @@ const pageHtml = (
 
 const contexts: readonly ContextPageId[] = ["components", "patterns"];
 
+// SafeHttp builds the canonical, typed router we rely on for href generation.
+let routes: AppRoutes = safeHttp<State, Vars, RouteElaboration>(
+  app,
+) as unknown as AppRoutes;
+
 const respondPage = (
   request: Request,
   contextId: ContextPageId,
@@ -466,19 +549,51 @@ const respondPage = (
   const subjects = subjectsByContext[ctxId];
   const resolvedSubject =
     subjects.find((subject) => subject.id === subjectId) ?? subjects[0];
-  return htmlResponse(pageHtml(ctxId, resolvedSubject.id, request));
+  return htmlResponse(
+    pageHtml(ctxId, resolvedSubject.id, request, routes),
+  );
 };
 
-app.get("/", (c) => respondPage(c.req, defaultContext));
-app.get("/components", (c) => respondPage(c.req, "components"));
-app.get(
-  "/components/:subject",
-  (c) => respondPage(c.req, "components", c.params.subject),
-);
-app.get("/patterns", (c) => respondPage(c.req, "patterns"));
-app.get(
-  "/patterns/:subject",
-  (c) => respondPage(c.req, "patterns", c.params.subject),
-);
+routes = routes
+  .get(
+    routeIds.root,
+    {
+      description: "Landing view for Natural DS developer lab",
+      contextId: defaultContext,
+    },
+    (c) => respondPage(c.req, defaultContext),
+  )
+  .get(
+    routeIds.components,
+    {
+      description: "Components catalog landing",
+      contextId: "components",
+    },
+    (c) => respondPage(c.req, "components"),
+  )
+  .get(
+    routeIds.componentsSubject,
+    {
+      description: "Component subject-focused documentation",
+      contextId: "components",
+    },
+    (c) => respondPage(c.req, "components", c.params.subject),
+  )
+  .get(
+    routeIds.patterns,
+    {
+      description: "Patterns catalog landing",
+      contextId: "patterns",
+    },
+    (c) => respondPage(c.req, "patterns"),
+  )
+  .get(
+    routeIds.patternsSubject,
+    {
+      description: "Pattern subject-focused documentation",
+      contextId: "patterns",
+    },
+    (c) => respondPage(c.req, "patterns", c.params.subject),
+  ) as AppRoutes;
 
 app.serve({ port: 7601 });
