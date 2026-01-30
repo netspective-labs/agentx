@@ -351,9 +351,9 @@ This is essential for AI maintenance. AI systems iterate by running tests,
 observing failures, and refining behavior. Without deterministic tests, safe
 autonomous maintenance is not possible.
 
-## Why AgentX for AI Workforce?
+## Why AgentX for AI Workforce™?
 
-- AI Workforce is multiple AI agents collaborating under compliance,
+- AI Workforce™ is multiple AI agents collaborating under compliance,
   auditability, accountability, and human oversight rather than a single
   chatbot.
 - Regulated settings demand traceable actions, deterministic responses, and
@@ -377,17 +377,3 @@ directly in TypeScript and grounded in native platform capabilities. By keeping
 the stack explicit, minimal, and internally complete, AgentX remains
 deterministic, inspectable, and maintainable over time, including by AI systems,
 without relying on hidden dependencies or emergent behavior from layered tools.
-
-## Rename Notes / Migration
-
-- **Brand**: Autarkic → AgentX across docs, marketing, and UX statements.
-- **Repository**: netspective-labs/autarkic → netspective-labs/agentx for all
-  GitHub links and badges.
-- **Tasks**: `deno task test`, `deno task test:install-deps`, and others remain
-  unchanged but now run inside the AgentX narrative; update any custom aliases
-  pointing to the old name.
-- **API import paths**: update any `autarkic/` specifiers to `agentx/` (see
-  `deno.json` for the canonical name change) and update downstream imports
-  accordingly.
-- **Compliance**: mention AgentX as the regulated interface substrate for AI
-  Workforce; keep the old branding only for these rename notes if needed.
