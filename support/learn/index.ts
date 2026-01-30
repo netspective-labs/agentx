@@ -152,7 +152,7 @@ const indexHtml = `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Autarkic UX Learning Resources</title>
+<title>AgentX UX Learning Resources</title>
   </head>
   <frameset rows="56,*" frameborder="0" border="0" framespacing="0">
     <frame src="/frame-top" name="resourceTop" />
@@ -294,9 +294,9 @@ const blankFrameHtml = `<!doctype html>
     <main>
       <article class="intro">
         <header>
-          <h1>Learning Resources Server</h1>
+            <h1>Learning Resources Server</h1>
           <p>
-            The Autarkic learning hub catalogs ContinuUX, Natural HTML, and Natural DS samples.
+            The AgentX learning hub catalogs ContinuUX, Natural HTML, and Natural DS samples.
             Selecting a resource spins up its Deno process and renders it in this frame.
           </p>
         </header>

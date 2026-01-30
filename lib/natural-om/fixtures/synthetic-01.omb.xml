@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 
 <root root-attr-1="root-attr-1-text-in-attr" 
-  xmlns:omb="http://www.netspective.com/labs/autarkic"
+  xmlns:omb="http://www.netspective.com/labs/agentx"
   xmlns:xdm="http://www.netspective.org/Framework/Commons/XMLDataModel">
 
     PCDATA in root.

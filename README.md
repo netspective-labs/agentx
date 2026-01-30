@@ -1,41 +1,53 @@
-# Autarkic: an AI-first, hypermedia-native UX family
+# AgentX: an AI-first, hypermedia-native UX + MX family
 
-Autarkic is a family of vertically integrated, dependency-free (or deliberately
-dependency-light) user experience (UX) libraries and services for modern
-server-centric web applications. It is not a framework. It is a set of tightly
-scoped libraries that work together as a coherent whole to support progressive
-enhancement, typed hypermedia interactions, AI-first maintenance, and a complete
-design system for Deno microservices and CLIs.
+AgentX is the user experience (`UX`) and machine experience (`MX`) substrate for
+AI agents and other microservices: the interaction, presentation, hypermedia,
+and operational interface layer that lets humans and agentic systems safely
+operate, interact, and maintain server-centric hypermedia systems. It covers
+both the screens, interactions, and content humans use and the APIs, MCPs, and
+programmatic surfaces that fleets of agents require.
 
-Autarkic is designed to stand on its own. Its core layers are implemented
-directly in TypeScript, rely on native platform capabilities where possible, and
-avoid external frameworks, templating DSLs, and build-time ecosystems that
-fragment behavior across tools.
+AgentX is positioned for regulated environments. The AI Workforce™ is a group of
+AI agents that cooperate under compliance, auditability, accountability, and
+human oversight. AgentX is the interface substrate those agents (and humans) use
+to act safely, deterministically, and traceably, with built-in audit trails,
+open diagnostics, and governance-friendly patterns.
 
-The core promise: teams can build compelling web-based UIs with “natural” HTML
-authoring (functions, not tags), without inventing templating DSLs or assembling
-a patchwork of dependencies, while still getting a cohesive, production-grade
-design system that produces good-looking UIs without every developer becoming a
-designer.
+AgentX is a family of vertically integrated, dependency-free (or deliberately
+dependency-light) UX and MX libraries and services for modern server-centric
+Deno applications. It is not a framework; it is a set of tightly scoped,
+composable modules that work together to support progressive enhancement, typed
+hypermedia interactions, AI-first maintenance, and a complete design system for
+Deno microservices and CLIs.
 
-Autarkic ships with an integrated CSS framework through its design systems, so
+AgentX is designed to stand on its own. Its core layers are implemented directly
+in TypeScript, rely on native platform capabilities where possible, and avoid
+external frameworks, templating DSLs, and build-time ecosystems that fragment
+behavior across tools.
+
+The core promise: teams can build compelling web-based interfaces with “natural”
+HTML authoring (functions, not tags) without inventing templating DSLs or
+assembling a patchwork of dependencies, while still getting a cohesive,
+production-grade design system that produces polished UIs without every engineer
+becoming a designer.
+
+AgentX ships with an integrated CSS framework through its design systems, so
 teams can deliver complete UI experiences without pulling in Tailwind or other
 external CSS libraries.
 
-At a high level, Autarkic brings together four ideas:
+At a high level, AgentX brings together four ideas:
 
 - Server-first HTML as the default UX substrate
 - Typed hypermedia interactions instead of opaque client frameworks
 - Progressive client complexity, added only when needed
 - A codebase structured so AI systems can safely maintain it end to end
 
-Autarkic is not trying to be Ruby on Rails, Express, Next.js, Astro, Hono,
-jQuery, or a general-purpose web framework. Those ecosystems solve broad web
-application problems across many runtimes and rely on layered dependency stacks.
-Autarkic is intentionally narrower: a self-contained, AI-maintainable family of
-UX libraries for type-safe Deno services, Deno microservices, and Deno CLIs that
-need rich, server-directed web interfaces without external orchestration
-frameworks.
+AgentX is not trying to be Ruby on Rails, Express, Next.js, Astro, Hono, jQuery,
+or a general-purpose web framework. Those ecosystems solve broad problems across
+many runtimes and rely on layered dependency stacks. AgentX is intentionally
+narrower: a self-contained, AI-maintainable family of UX libraries for type-safe
+Deno services, Deno microservices, and Deno CLIs that need rich, server-directed
+web interfaces without external orchestration frameworks.
 
 Our focus is different:
 
@@ -54,7 +66,7 @@ _Continuux_ is the interaction engine. _Natural HTML_ is the rendering substrate
 with no external CSS dependencies. _Web Components_ are the scaling mechanism
 for client-side complexity. Deterministic testing is the enforcement layer.
 
-Together, these form Autarkic: a pragmatic, AI-first family of UX libraries that
+Together, these form AgentX: a pragmatic, AI-first family of UX libraries that
 is vertically integrated by design, dependency-free at its core, and intended to
 remain understandable long after the original authors, human or otherwise, have
 moved on.
@@ -95,7 +107,7 @@ $ ./support/learn/03-natural-ds/guide.ts       # full Natural Design System demo
 
 ## Modules
 
-Autarkic is organized intentionally by concern, not by runtime.
+AgentX is organized intentionally by concern, not by runtime.
 
 ### `lib/natural-html`
 
@@ -106,7 +118,7 @@ of Continuux itself.
   deterministic server-side rendering and tests. It replaces JSX, templating
   engines, and DOM mutation with explicit HTML generation, safe raw content
   handling, and stable attribute ordering. It is the foundation for all SSR in
-  Autarkic.
+  AgentX.
 - `elements-dom.js` is a twin of `elements.ts` for web browser user agents.
 - Universal helpers that are safe to use anywhere and have no browser- or
   server-specific assumptions.
@@ -120,8 +132,8 @@ of Continuux itself.
 
 #### Dialog system (`dialog.ts`, `dialog-zod.ts`, `dialog-lform.ts`)
 
-Autarkic includes a schema-driven dialog and form infrastructure built on
-Natural HTML and Zod.
+AgentX includes a schema-driven dialog and form infrastructure built on Natural
+HTML and Zod.
 
 At its core, dialogs are projections of schemas. A dialog is defined against a
 Zod object schema, and every field, value, and validation rule flows directly
@@ -178,7 +190,7 @@ from that contract. There is no parallel “form model” to keep in sync.
 The hypermedia interaction layer. This is where server and browser “know” how to
 talk to each other using typed contracts.
 
-- `http.ts`, `bundle.ts`, and related helpers provide Infrastructure for SSE
+- `http.ts`, `bundle.ts`, and related helpers provide infrastructure for SSE
   sessions, HTTP responses, and optional on-the-fly bundling of browser modules,
   kept minimal and auditable.
 
@@ -206,7 +218,7 @@ talk to each other using typed contracts.
   so developers write functions, not attribute names.
 
 Together, these form Continuux: the server-directed interaction layer inside
-Autarkic.
+AgentX.
 
 ### `lib/natural-ds`
 
@@ -214,7 +226,7 @@ Natural DS is the canonical “Natural Design System” built on the Natural HTM
 design-system runtime. It provides a concrete, opinionated set of layouts,
 regions, and components (for example `NaturalDoc` and its header/sidebar/toc
 regions) that power real pages and demos in this repo. It is the reference
-design system for Autarkic, but it is not the only option: other design systems
+design system for AgentX, but it is not the only option: other design systems
 can be created that look completely different while retaining the same
 type-safe, deterministic contract.
 
@@ -238,7 +250,7 @@ and AI-readable specs for the system.
 
 ## Core architectural concepts
 
-Autarkic treats HTML and hypermedia as the primary interface between server and
+AgentX treats HTML and hypermedia as the primary interface between server and
 browser. The browser is not a co-equal application runtime by default. It is a
 progressively enhanced client that becomes more capable only when necessary.
 
@@ -266,7 +278,7 @@ Browser
 
 ## Progressive client complexity
 
-Autarkic explicitly supports a progression model rather than a single client
+AgentX explicitly supports a progression model rather than a single client
 architecture.
 
 **Stage 1**: SSR only Most pages should live here.
@@ -299,7 +311,7 @@ becomes real application logic.
 - Optional SSE streams support live updates
 
 This stage is not a failure of SSR or Continuux. It is a recognition that some
-UI problems require local client state. Autarkic supports this without forcing a
+UI problems require local client state. AgentX supports this without forcing a
 full SPA architecture.
 
 Client complexity rules of thumb:
@@ -312,7 +324,7 @@ Element with a proper API.
 
 ## AI-first maintainability
 
-Autarkic is explicitly designed to be maintainable by AI systems, not just
+AgentX is explicitly designed to be maintainable by AI systems, not just
 assisted by them.
 
 This influences several core decisions:
@@ -339,14 +351,43 @@ This is essential for AI maintenance. AI systems iterate by running tests,
 observing failures, and refining behavior. Without deterministic tests, safe
 autonomous maintenance is not possible.
 
+## Why AgentX for AI Workforce?
+
+- AI Workforce is multiple AI agents collaborating under compliance,
+  auditability, accountability, and human oversight rather than a single
+  chatbot.
+- Regulated settings demand traceable actions, deterministic responses, and
+  auditable conversation trails; AgentX keeps logs, diagnostics, and
+  schema-driven interactions in the open so reviews and forensics are
+  straightforward.
+- AgentX’s deterministic, server-first, typed hypermedia approach keeps behavior
+  testable, maintainable (including AI maintenance), and compatible with
+  compliance workflows because every interaction is explicit and observable.
+- AgentX balances automation with human oversight; it lets the workforce run
+  autonomously when safe and invite human review or intervention when needed.
+
 ## Where does the name come from?
 
-Autarkic is named for autarky, meaning self-sufficiency. The project is designed
-as a vertically integrated, dependency-free UX system that stands on its own
-rather than assembling behavior from external frameworks, templating engines, or
-build-time ecosystems. HTML, interactions, styling, and testing are treated as a
-single coherent surface, implemented directly in TypeScript and grounded in
-native platform capabilities. By keeping the stack explicit, minimal, and
-internally complete, Autarkic remains deterministic, inspectable, and
-maintainable over time, including by AI systems, without relying on hidden
-dependencies or emergent behavior from layered tools.
+AgentX is named for the interaction (UX) and machine (MX) experience layer it
+provides. It is designed as a vertically integrated, dependency-free UX + MX
+system that stands on its own rather than assembling behavior from external
+frameworks, templating engines, or build-time ecosystems. HTML, interactions,
+styling, and testing are treated as a single coherent surface, implemented
+directly in TypeScript and grounded in native platform capabilities. By keeping
+the stack explicit, minimal, and internally complete, AgentX remains
+deterministic, inspectable, and maintainable over time, including by AI systems,
+without relying on hidden dependencies or emergent behavior from layered tools.
+
+## Rename Notes / Migration
+
+- **Brand**: Autarkic → AgentX across docs, marketing, and UX statements.
+- **Repository**: netspective-labs/autarkic → netspective-labs/agentx for all
+  GitHub links and badges.
+- **Tasks**: `deno task test`, `deno task test:install-deps`, and others remain
+  unchanged but now run inside the AgentX narrative; update any custom aliases
+  pointing to the old name.
+- **API import paths**: update any `autarkic/` specifiers to `agentx/` (see
+  `deno.json` for the canonical name change) and update downstream imports
+  accordingly.
+- **Compliance**: mention AgentX as the regulated interface substrate for AI
+  Workforce; keep the old branding only for these rename notes if needed.

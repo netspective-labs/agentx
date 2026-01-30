@@ -196,7 +196,7 @@ const pitchFeatureCards = (ctx: DsCtx) =>
     cards: [
       featureCard(ctx, {
         icon: "📚",
-        title: "Autarkic",
+        title: "AgentX",
         description:
           "Deno-first UI shell for docs, automation, and dashboards.",
       }),
@@ -235,7 +235,7 @@ const pitchDocsHighlights = (ctx: DsCtx) =>
       icon: icons.info,
       variant: "info",
       content:
-        "Autarkic pairs Natural DS with ContinuUX bundles so you can ship docs and APIs from the same runtime.",
+        "AgentX pairs Natural DS with ContinuUX bundles so you can ship docs and APIs from the same runtime.",
     }),
     callout(ctx, {
       title: "ContinuUX HTTP first",
@@ -262,8 +262,8 @@ const pitchTryItSnippet = (ctx: DsCtx) =>
 const pitchPageHtml = (): string => {
   const page = ds.page("NaturalPitch", {}, {
     slots: {
-      heroBadge: () => H.text("Autarkic library"),
-      heroTitle: () => H.text("Autarkic is the sales-ready docs shell"),
+      heroBadge: () => H.text("AgentX library"),
+      heroTitle: () => H.text("AgentX is the sales-ready docs shell"),
       heroSubtitle: () =>
         H.text(
           "Ship documentation, APIs, and automation with a single Deno-native runtime powered by ContinuUX and Natural Design System.",
@@ -277,7 +277,7 @@ const pitchPageHtml = (): string => {
       heroSecondaryAction: (ctx) =>
         pitchHeroButton(ctx, {
           label: "Explore GitHub",
-          href: "https://github.com/netspective-labs/autarkic",
+          href: "https://github.com/netspective-labs/agentx",
           primary: false,
           target: "_blank",
           rel: "noreferrer",
@@ -285,7 +285,7 @@ const pitchPageHtml = (): string => {
       heroVisual: (ctx) =>
         pitchHeroVisual(ctx, {
           badge: "Launch stack",
-          title: "Autarkic · ContinuUX · Natural DS",
+          title: "AgentX · ContinuUX · Natural DS",
           command: "deno run -A --watch support/learn/03-natural-ds/guide.ts",
           footerLeft: "Docs ready",
           footerRight: "CI friendly",
@@ -293,7 +293,7 @@ const pitchPageHtml = (): string => {
       featureIntro: (ctx) =>
         bodyText(ctx, {
           content:
-            "Autarkic bundles Natural DS layouts, Natural HTML primitives, and ContinuUX services so your docs, demos, and proxies stay in sync.",
+            "AgentX bundles Natural DS layouts, Natural HTML primitives, and ContinuUX services so your docs, demos, and proxies stay in sync.",
         }),
       featureCards: pitchFeatureCards,
       tryItSnippet: pitchTryItSnippet,
@@ -304,7 +304,7 @@ const pitchPageHtml = (): string => {
           { label: "View docs", href: "/docs", primary: true },
           {
             label: "Open GitHub",
-            href: "https://github.com/netspective-labs/autarkic",
+            href: "https://github.com/netspective-labs/agentx",
             primary: false,
             target: "_blank",
             rel: "noreferrer",
@@ -316,7 +316,7 @@ const pitchPageHtml = (): string => {
         ),
     },
     headSlots: headSlots({
-      title: "Autarkic Pitch",
+      title: "AgentX Pitch",
       meta: [
         H.meta({ charset: "utf-8" }),
         H.meta({

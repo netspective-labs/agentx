@@ -12,7 +12,7 @@ composition that emits HAST (and HTML downstream), so the same code works in
 interactive or non-interactive contexts, with or without a browser DOM. It is
 safe for static site generation, batch rendering, tests, and server responses.
 
-Natural HTML is the foundation for Autarkic server-rendered UI and the Natural
+Natural HTML is the foundation for AgentX server-rendered UI and the Natural
 Design System runtime.
 
 ## Why it exists
@@ -151,7 +151,7 @@ and `<script>` tags.
 This enables integrated styling and behavior without relying on external CSS
 frameworks or build-time tooling.
 
-## How it fits in Autarkic
+## How it fits in AgentX
 
 Natural HTML is the rendering substrate. Dialogs provide schema-driven form
 infrastructure. Continuux handles typed interaction contracts and SSE. Natural

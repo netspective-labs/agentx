@@ -450,11 +450,11 @@ const gitHubSubjects: Record<GitHubSubjectId, GitHubSubject> = {
     org: "netspective-labs",
     repos: [
       {
-        slug: "autarkic",
-        name: "Autarkic",
+        slug: "agentx",
+        name: "AgentX",
         description:
-          "Deno UI shell combining Natural DS with ContinuUX patterns.",
-        url: "https://github.com/netspective-labs/autarkic",
+          "Deno UX + MX shell combining Natural DS with ContinuUX patterns.",
+        url: "https://github.com/netspective-labs/agentx",
       },
       {
         slug: "home-polyglot",

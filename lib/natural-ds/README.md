@@ -1,6 +1,6 @@
 # Natural DS
 
-Natural DS is the canonical "Natural Design System" for Autarkic. It is a fully
+Natural DS is the canonical "Natural Design System" for AgentX. It is a fully
 implemented design system built on the Natural HTML design-system runtime
 (`lib/natural-html/design-system.ts`). If you have used design systems like
 Material UI or Chakra UI, think of Natural DS as the reference implementation,

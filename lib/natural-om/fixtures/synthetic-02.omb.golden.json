@@ -3,7 +3,7 @@
     "tagName": "root",
     "tagToken": "root",
     "attrs": {
-      "xmlnsOmb": "http://www.netspective.com/labs/autarkic",
+      "xmlnsOmb": "http://www.netspective.com/labs/agentx",
       "xmlnsXdm": "http://www.netspective.org/Framework/Commons/XMLDataModel",
       "rootAttr1": "root-attr-1-text",
       "testBoolean": "yes",
@@ -780,7 +780,7 @@
       "extends": "test-nested-template-1"
     }
   ],
-  "xmlnsOmb": "http://www.netspective.com/labs/autarkic",
+  "xmlnsOmb": "http://www.netspective.com/labs/agentx",
   "xmlnsXdm": "http://www.netspective.org/Framework/Commons/XMLDataModel",
   "rootAttr1": "root-attr-1-text",
   "testBoolean": true,
