@@ -1,4 +1,4 @@
-name: Run Autarkic Tests
+name: Run AgentX Tests
 
 on:
   push:
